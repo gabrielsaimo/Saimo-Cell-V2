@@ -193,13 +193,14 @@ const styles = StyleSheet.create({
   },
   certBadge: {
     position: 'absolute',
-    top: Spacing.sm,
-    right: Spacing.sm + 30,
+    bottom: 52,
+    right: Spacing.sm,
     borderWidth: 1.5,
     borderRadius: 4,
     paddingHorizontal: 5,
     paddingVertical: 2,
     backgroundColor: 'rgba(0,0,0,0.6)',
+    zIndex: 2,
   },
   certText: {
     fontSize: 10,
@@ -212,17 +213,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     padding: 6,
     borderRadius: BorderRadius.full,
+    zIndex: 3,
   },
   favoriteActive: {
     backgroundColor: 'rgba(255,71,87,0.3)',
   },
   typeBadge: {
     position: 'absolute',
-    bottom: 50,
+    bottom: 52,
     left: Spacing.sm,
     backgroundColor: 'rgba(0,0,0,0.6)',
     padding: 4,
     borderRadius: BorderRadius.sm,
+    zIndex: 2,
   },
   titleContainer: {
     position: 'absolute',

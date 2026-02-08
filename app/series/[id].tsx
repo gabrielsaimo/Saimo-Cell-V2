@@ -19,7 +19,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { getSeriesById } from '../../services/mediaService';
 import { useMediaStore } from '../../stores/mediaStore';
-import type { SeriesItem, Episode } from '../../types';
+import type { SeriesItem, Episode, CastMember } from '../../types';
 
 const { width, height } = Dimensions.get('window');
 
@@ -105,6 +105,13 @@ export default function SeriesDetailScreen() {
       handlePlayEpisode(ep, progress.season.toString());
     }
   }, [series, progress, handlePlayEpisode]);
+
+  const handleActorPress = useCallback((actor: CastMember) => {
+    router.push({
+      pathname: '/actor/[id]',
+      params: { id: actor.id.toString(), name: actor.name }
+    });
+  }, [router]);
 
   if (loading) {
     return (
@@ -222,6 +229,35 @@ export default function SeriesDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Sinopse</Text>
             <Text style={styles.overview}>{tmdb.overview}</Text>
+          </View>
+        )}
+
+        {/* Cast */}
+        {tmdb?.cast && tmdb.cast.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Elenco</Text>
+            <FlatList
+              data={tmdb.cast.slice(0, 15)}
+              keyExtractor={(item) => item.id.toString()}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: Spacing.lg }}
+              renderItem={({ item: actor }) => (
+                <TouchableOpacity 
+                  style={styles.castCard}
+                  onPress={() => handleActorPress(actor)}
+                >
+                  <Image
+                    source={{ uri: actor.photo || '' }}
+                    style={styles.castPhoto}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                  />
+                  <Text style={styles.castName} numberOfLines={1}>{actor.name}</Text>
+                  <Text style={styles.castCharacter} numberOfLines={1}>{actor.character}</Text>
+                </TouchableOpacity>
+              )}
+            />
           </View>
         )}
         
@@ -500,5 +536,29 @@ const styles = StyleSheet.create({
   backBtnText: {
     color: '#000',
     fontWeight: '600',
+  },
+  // Cast Styles
+  castCard: {
+    width: 80,
+    marginRight: Spacing.md,
+    alignItems: 'center',
+  },
+  castPhoto: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: Colors.surface,
+  },
+  castName: {
+    color: Colors.text,
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: Spacing.xs,
+  },
+  castCharacter: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    textAlign: 'center',
   },
 });
