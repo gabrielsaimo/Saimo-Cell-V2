@@ -1,0 +1,226 @@
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  StatusBar,
+  TouchableOpacity,
+  ActivityIndicator,
+  FlatList,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+
+import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
+import { loadCategory } from '../../services/mediaService';
+import { useMediaStore } from '../../stores/mediaStore';
+import type { MediaItem } from '../../types';
+import MediaCard from '../../components/MediaCard';
+import FilterBar from '../../components/FilterBar';
+import { filterMedia, sortMedia, getAllGenres } from '../../services/mediaService';
+
+const ITEMS_PER_PAGE = 50; // Carregar 50 por vez
+
+export default function CategoryScreen() {
+  const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  
+  const [loading, setLoading] = useState(true);
+  const [allItems, setAllItems] = useState<MediaItem[]>([]); // Todos os itens
+  const [displayCount, setDisplayCount] = useState(ITEMS_PER_PAGE); // Quantos exibir
+  const [loadingMore, setLoadingMore] = useState(false);
+  
+  const { 
+    activeFilter, activeSort, activeGenre,
+    setFilter, setSort, setGenre, clearFilters 
+  } = useMediaStore();
+
+  useEffect(() => {
+    async function load() {
+      if (!id) return;
+      const data = await loadCategory(id);
+      setAllItems(data);
+      setDisplayCount(ITEMS_PER_PAGE); // Resetar contagem ao mudar categoria
+      setLoading(false);
+    }
+    load();
+  }, [id]);
+
+  // Resetar contagem quando filtros mudam
+  useEffect(() => {
+    setDisplayCount(ITEMS_PER_PAGE);
+  }, [activeFilter, activeGenre, activeSort]);
+
+  const handleBack = () => router.back();
+
+  // Gêneros
+  const genres = useMemo(() => getAllGenres(allItems), [allItems]);
+
+  // Filtrar e ordenar TODOS os itens
+  const filteredItems = useMemo(() => {
+    let result = allItems;
+    
+    if (activeFilter !== 'all') {
+      result = filterMedia(result, activeFilter);
+    }
+    if (activeGenre) {
+      result = filterMedia(result, undefined, activeGenre);
+    }
+    result = sortMedia(result, activeSort);
+    
+    return result;
+  }, [allItems, activeFilter, activeGenre, activeSort]);
+
+  // Itens visíveis (paginados)
+  const visibleItems = useMemo(() => {
+    return filteredItems.slice(0, displayCount);
+  }, [filteredItems, displayCount]);
+
+  // Verificar se há mais para carregar
+  const hasMore = displayCount < filteredItems.length;
+
+  // Carregar mais itens
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return;
+    
+    setLoadingMore(true);
+    
+    // Simular pequeno delay para UX
+    setTimeout(() => {
+      setDisplayCount(prev => Math.min(prev + ITEMS_PER_PAGE, filteredItems.length));
+      setLoadingMore(false);
+    }, 100);
+  }, [loadingMore, hasMore, filteredItems.length]);
+
+  // Footer com indicador de loading
+  const renderFooter = useCallback(() => {
+    if (!hasMore) return null;
+    
+    return (
+      <View style={styles.footer}>
+        {loadingMore ? (
+          <ActivityIndicator size="small" color={Colors.primary} />
+        ) : (
+          <Text style={styles.footerText}>
+            Mostrando {visibleItems.length} de {filteredItems.length}
+          </Text>
+        )}
+      </View>
+    );
+  }, [hasMore, loadingMore, visibleItems.length, filteredItems.length]);
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+          <Ionicons name="arrow-back" size={24} color={Colors.text} />
+        </TouchableOpacity>
+        <View style={styles.titleContainer}>
+          <Text style={styles.title}>{name || 'Categoria'}</Text>
+          <Text style={styles.count}>
+            {visibleItems.length} de {filteredItems.length} títulos
+          </Text>
+        </View>
+        <View style={{ width: 40 }} />
+      </View>
+      
+      {/* Filters */}
+      <FilterBar
+        activeFilter={activeFilter}
+        activeSort={activeSort}
+        activeGenre={activeGenre}
+        genres={genres}
+        onFilterChange={setFilter}
+        onSortChange={setSort}
+        onGenreChange={setGenre}
+        onClear={clearFilters}
+      />
+      
+      {/* Grid com Infinite Scroll */}
+      <FlatList
+        data={visibleItems}
+        keyExtractor={(item) => item.id}
+        numColumns={3}
+        contentContainerStyle={styles.grid}
+        columnWrapperStyle={styles.row}
+        showsVerticalScrollIndicator={false}
+        renderItem={({ item }) => (
+          <MediaCard item={item} size="small" />
+        )}
+        // Performance
+        initialNumToRender={15}
+        maxToRenderPerBatch={15}
+        windowSize={5}
+        removeClippedSubviews
+        // Infinite scroll
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={renderFooter}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  center: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+  },
+  backButton: {
+    padding: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.full,
+  },
+  titleContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  title: {
+    color: Colors.text,
+    fontSize: Typography.h2.fontSize,
+    fontWeight: '700',
+  },
+  count: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+  },
+  grid: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: 120,
+  },
+  row: {
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  footer: {
+    paddingVertical: Spacing.lg,
+    alignItems: 'center',
+  },
+  footerText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+  },
+});

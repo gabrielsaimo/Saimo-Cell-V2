@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Saimo-v2",
+    "slug": "saimo-v2",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/images/saimo_tv_logo.png",
+    "scheme": "saimo",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/saimo_tv_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0F"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.saimo.tv",
+      "requiresFullScreen": false,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/saimo_tv_logo.png",
+        "backgroundColor": "#0A0A0F"
+      },
+      "package": "com.saimo.tv",
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "INTERNET",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/saimo_tv_logo.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-video",
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "DEFAULT"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
