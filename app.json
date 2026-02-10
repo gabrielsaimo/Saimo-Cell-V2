@@ -42,13 +42,13 @@
     },
     "plugins": [
       "expo-router",
-      "expo-video",
       [
         "expo-screen-orientation",
         {
           "initialOrientation": "DEFAULT"
         }
-      ]
+      ],
+      "./plugins/withCleartextTraffic"
     ],
     "experiments": {
       "typedRoutes": true

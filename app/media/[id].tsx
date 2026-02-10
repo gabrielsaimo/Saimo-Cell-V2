@@ -66,7 +66,7 @@ export default function MediaDetailScreen() {
     addToHistory(media.id);
     router.push({
       pathname: '/media-player/[id]' as any,
-      params: { id: media.id, url: media.url, title: media.tmdb?.title || media.name }
+      params: { id: media.id, url: encodeURIComponent(media.url), title: media.tmdb?.title || media.name }
     });
   }, [media, router, addToHistory]);
 

@@ -1,14 +1,14 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
   Dimensions,
   StatusBar,
   BackHandler,
 } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -27,51 +27,48 @@ interface VideoPlayerProps {
 export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  
+
   const [showControls, setShowControls] = useState(true);
   const [epg, setEpg] = useState<CurrentProgram | null>(null);
   const [hasError, setHasError] = useState(false);
-  
+
   const { toggleFavorite, isFavorite } = useFavoritesStore();
   const [favorite, setFavorite] = useState(isFavorite(channel.id));
-  
+
+  const videoRef = useRef<Video>(null);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Criar player com expo-video
-  const player = useVideoPlayer(channel.url, player => {
-    player.loop = false;
-    player.play();
-  });
+  // Handle playback status updates from expo-av
+  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
+    if (!isMountedRef.current) return;
 
-  // Cleanup imediato ao desmontar
+    if (!status.isLoaded) {
+      if (status.error) {
+        setHasError(true);
+      }
+      return;
+    }
+
+    // If it loaded successfully, clear error
+    if (status.isLoaded && hasError) {
+      setHasError(false);
+    }
+  }, [hasError]);
+
+  // Cleanup ao desmontar
   useEffect(() => {
     isMountedRef.current = true;
-    
+
     return () => {
       isMountedRef.current = false;
-      // Para o player imediatamente
       try {
-        player.pause();
+        videoRef.current?.pauseAsync();
       } catch (e) {
         // Ignora erros de cleanup
       }
     };
-  }, [player]);
-
-  // Monitorar erros do player (sem bloquear)
-  useEffect(() => {
-    const checkError = () => {
-      if (!isMountedRef.current) return;
-      if (player.status === 'error') {
-        setHasError(true);
-      }
-    };
-
-    // Verifica apenas uma vez após 10 segundos
-    const timeout = setTimeout(checkError, 10000);
-    return () => clearTimeout(timeout);
-  }, [player]);
+  }, []);
 
   // Forçar orientação paisagem ao entrar
   useEffect(() => {
@@ -84,7 +81,6 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 
   // Carregar EPG do canal (não-bloqueante)
   useEffect(() => {
-    // Carrega EPG em background sem bloquear
     fetchChannelEPG(channel.id).then(() => {
       if (isMountedRef.current) {
         setEpg(getCurrentProgram(channel.id));
@@ -127,14 +123,13 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   }, []);
 
   const handleBack = useCallback(() => {
-    // Executa imediatamente sem await
     isMountedRef.current = false;
     try {
-      player.pause();
+      videoRef.current?.pauseAsync();
     } catch (e) {}
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     router.back();
-  }, [router, player]);
+  }, [router]);
 
   const handleToggleFavorite = useCallback(() => {
     toggleFavorite(channel.id);
@@ -147,11 +142,18 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     }
   }, [hasError]);
 
-  const handleRetry = useCallback(() => {
+  const handleRetry = useCallback(async () => {
     setHasError(false);
-    player.replace(channel.url);
-    player.play();
-  }, [channel.url, player]);
+    try {
+      await videoRef.current?.unloadAsync();
+      await videoRef.current?.loadAsync(
+        { uri: channel.url },
+        { shouldPlay: true }
+      );
+    } catch (e) {
+      setHasError(true);
+    }
+  }, [channel.url]);
 
   const { width, height } = Dimensions.get('window');
 
@@ -167,17 +169,21 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   return (
     <View style={styles.container}>
       <StatusBar hidden />
-      
-      <TouchableOpacity 
-        style={styles.videoContainer} 
+
+      <TouchableOpacity
+        style={styles.videoContainer}
         onPress={handleScreenPress}
         activeOpacity={1}
       >
-        <VideoView
-          player={player}
+        <Video
+          ref={videoRef}
+          source={{ uri: channel.url }}
           style={{ width: Math.max(width, height), height: Math.min(width, height) }}
-          contentFit="contain"
-          nativeControls={false}
+          resizeMode={ResizeMode.CONTAIN}
+          shouldPlay={true}
+          isLooping={false}
+          useNativeControls={false}
+          onPlaybackStatusUpdate={onPlaybackStatusUpdate}
         />
 
         {/* Error State */}
@@ -212,20 +218,20 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               <TouchableOpacity style={styles.backButton} onPress={handleBack}>
                 <Ionicons name="arrow-back" size={28} color={Colors.text} />
               </TouchableOpacity>
-              
+
               <View style={styles.channelInfo}>
                 <Text style={styles.channelName}>{channel.name}</Text>
                 <Text style={styles.channelCategory}>{channel.category}</Text>
               </View>
-              
-              <TouchableOpacity 
-                style={[styles.iconButton, favorite && styles.iconButtonActive]} 
+
+              <TouchableOpacity
+                style={[styles.iconButton, favorite && styles.iconButtonActive]}
                 onPress={handleToggleFavorite}
               >
-                <Ionicons 
-                  name={favorite ? 'heart' : 'heart-outline'} 
-                  size={24} 
-                  color={favorite ? '#FF4757' : Colors.text} 
+                <Ionicons
+                  name={favorite ? 'heart' : 'heart-outline'}
+                  size={24}
+                  color={favorite ? '#FF4757' : Colors.text}
                 />
               </TouchableOpacity>
             </View>
@@ -248,8 +254,8 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                       {epg.current.title}
                     </Text>
                     <View style={styles.progressBar}>
-                      <View 
-                        style={[styles.progressFill, { width: `${epg.progress}%` }]} 
+                      <View
+                        style={[styles.progressFill, { width: `${epg.progress}%` }]}
                       />
                     </View>
                     {epg.next && (

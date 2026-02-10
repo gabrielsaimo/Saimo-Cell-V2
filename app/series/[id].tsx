@@ -89,10 +89,10 @@ export default function SeriesDetailScreen() {
     setSeriesProgress(series.id, parseInt(season), ep.episode, ep.id);
     router.push({
       pathname: '/media-player/[id]' as any,
-      params: { 
-        id: ep.id, 
-        url: ep.url, 
-        title: `${series.name} - T${season} E${ep.episode}` 
+      params: {
+        id: ep.id,
+        url: encodeURIComponent(ep.url),
+        title: `${series.name} - T${season} E${ep.episode}`
       }
     });
   }, [series, router, setSeriesProgress]);
