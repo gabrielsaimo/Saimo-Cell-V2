@@ -276,11 +276,71 @@ export function searchInLoadedData(query: string): MediaItem[] {
 /**
  * Limpa todo o cache em memória
  */
-export function clearMemoryCache(): void {
-    PAGE_CACHE.clear();
-    CATEGORY_CACHE.clear();
-    LAST_PAGE.clear();
-    HAS_MORE.clear();
+HAS_MORE.clear();
+}
+
+/**
+ * Inicia o carregamento em segundo plano de TODAS as páginas restantes.
+ * Executa sequencialmente com delay para não travar a UI.
+ */
+let isBackgroundLoading = false;
+let stopBackgroundLoading = false;
+
+export async function stopLoading() {
+    stopBackgroundLoading = true;
+}
+
+export async function startBackgroundLoading(
+    onNewData?: () => void
+): Promise<void> {
+    if (isBackgroundLoading) return;
+    isBackgroundLoading = true;
+    stopBackgroundLoading = false;
+
+    console.log('[BackgroundLoad] Iniciando carregamento profundo...');
+
+    // Iterar por todas as categorias
+    for (const cat of CATEGORIES) {
+        if (stopBackgroundLoading) break;
+
+        // Enquanto houver mais páginas nesta categoria...
+        while (HAS_MORE.get(cat.id) !== false && !stopBackgroundLoading) {
+            // Verificar se temos a próxima página no cache
+            const currentPage = LAST_PAGE.get(cat.id) || 1;
+            const nextPage = currentPage + 1;
+            const key = `${cat.id}-p${nextPage}`;
+
+            if (PAGE_CACHE.has(key)) {
+                // Já tem, passa pra próxima
+                continue;
+            }
+
+            try {
+                // Carregar próxima página
+                const newItems = await fetchCategoryPage(cat.id, nextPage);
+
+                if (newItems.length > 0) {
+                    // Notificar UI que tem dados novos (para busca)
+                    if (onNewData) onNewData();
+
+                    // Pequeno delay para respirar a thread JS
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } else {
+                    // Se veio vazio, break o loop dessa categoria (HAS_MORE já foi setado false pelo fetch)
+                    break;
+                }
+            } catch (err) {
+                // Erro silencioso no background
+                break;
+            }
+        }
+
+        // Delay entre categorias
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    isBackgroundLoading = false;
+    console.log('[BackgroundLoad] Finalizado.');
 }
 
 // ============================================================
