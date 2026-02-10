@@ -1,33 +1,50 @@
-// Serviço de mídia - funções auxiliares + wrappers para downloadService
+// Serviço de mídia - funções auxiliares + wrappers para streamingService
 import type { MediaItem, SeriesItem } from '../types';
 import {
-    loadAllCachedCategories,
-    loadCachedCategory,
-    DOWNLOAD_CATEGORIES
-} from './downloadService';
+    loadAllPreviews,
+    fetchCategoryPage,
+    getCategoryItems,
+    loadNextPage,
+    searchInLoadedData,
+    CATEGORIES,
+} from './streamingService';
 
-// Re-exportar categorias do downloadService
-export const MEDIA_CATEGORIES = DOWNLOAD_CATEGORIES;
+// Re-exportar categorias do streamingService
+export const MEDIA_CATEGORIES = CATEGORIES;
 
-// Wrapper para loadCategory - usa o cache do downloadService
-export async function loadCategory(categoryId: string, forceRefresh = false): Promise<MediaItem[]> {
-    return loadCachedCategory(categoryId);
+// Carregar preview (p1) de uma categoria
+export async function loadCategory(categoryId: string): Promise<MediaItem[]> {
+    const existing = getCategoryItems(categoryId);
+    if (existing.length > 0) return existing;
+    return fetchCategoryPage(categoryId, 1);
 }
 
-// Wrapper para loadInitialCategories - usa o cache do downloadService
-export async function loadInitialCategories(forceRefresh = false): Promise<Map<string, MediaItem[]>> {
-    return loadAllCachedCategories();
+// Carregar previews de todas categorias
+export async function loadInitialCategories(): Promise<Map<string, MediaItem[]>> {
+    return loadAllPreviews();
 }
 
-// Buscar mídia por nome
-export function searchMedia(query: string, items: MediaItem[]): MediaItem[] {
-    const normalized = query.toLowerCase().trim();
-    if (!normalized) return items;
+// Carregar próxima página de uma categoria (para infinite scroll)
+export async function loadMoreForCategory(categoryId: string): Promise<{
+    items: MediaItem[];
+    hasMore: boolean;
+}> {
+    return loadNextPage(categoryId);
+}
 
-    return items.filter(item => {
-        const title = item.tmdb?.title || item.name;
-        return title.toLowerCase().includes(normalized);
-    });
+// Buscar mídia por nome (nos dados carregados em memória)
+export function searchMedia(query: string, items?: MediaItem[]): MediaItem[] {
+    // Se items fornecido, busca neles
+    if (items && items.length > 0) {
+        const normalized = query.toLowerCase().trim();
+        if (!normalized) return items;
+        return items.filter(item => {
+            const title = item.tmdb?.title || item.name;
+            return title.toLowerCase().includes(normalized);
+        });
+    }
+    // Senão, busca em todo o cache
+    return searchInLoadedData(query);
 }
 
 // Filtrar mídia
@@ -91,9 +108,9 @@ export function getMediaByActor(actorId: number, items: MediaItem[]): MediaItem[
     );
 }
 
-// Buscar item por ID
+// Buscar item por ID (nos dados carregados)
 export async function getMediaById(id: string): Promise<MediaItem | null> {
-    const allCategories = await loadAllCachedCategories();
+    const allCategories = await loadInitialCategories();
     for (const items of Array.from(allCategories.values())) {
         const found = items.find((item: MediaItem) => item.id === id);
         if (found) return found;
@@ -103,7 +120,6 @@ export async function getMediaById(id: string): Promise<MediaItem | null> {
 
 // Buscar série por ID
 export async function getSeriesById(id: string): Promise<SeriesItem | null> {
-    // Séries são armazenadas junto com as outras mídias
     const item = await getMediaById(id);
     if (item && isSeries(item)) {
         return item as unknown as SeriesItem;

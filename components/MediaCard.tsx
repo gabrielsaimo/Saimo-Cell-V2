@@ -107,10 +107,10 @@ const MediaCard = memo(({ item, size = 'medium' }: MediaCardProps) => {
       />
       
       {/* Rating Badge */}
-      {tmdb?.rating && tmdb.rating > 0 && (
-        <View style={[styles.ratingBadge, { backgroundColor: getRatingColor(tmdb.rating) }]}>
+      {(tmdb?.rating || 0) > 0 && (
+        <View style={[styles.ratingBadge, { backgroundColor: getRatingColor(tmdb.rating!) }]}>
           <Ionicons name="star" size={10} color="#000" />
-          <Text style={styles.ratingText}>{tmdb.rating.toFixed(1)}</Text>
+          <Text style={styles.ratingText}>{tmdb.rating!.toFixed(1)}</Text>
         </View>
       )}
       

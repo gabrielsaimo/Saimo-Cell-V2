@@ -12,44 +12,27 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
 import {
-  downloadAllCategories,
-  loadAllCachedCategories,
-  getDownloadedCategories,
-  DOWNLOAD_CATEGORIES,
-  clearAllDownloads,
-} from '../../services/downloadService';
-import {
+  loadInitialCategories,
   searchMedia,
   filterMedia,
   sortMedia,
   getAllGenres,
 } from '../../services/mediaService';
+import { CATEGORIES, clearMemoryCache } from '../../services/streamingService';
 import type { MediaItem } from '../../types';
 import MediaRow from '../../components/MediaRow';
 import MediaCard from '../../components/MediaCard';
 import FilterBar from '../../components/FilterBar';
 
-const DOWNLOAD_COMPLETE_KEY = '@saimo_download_complete';
-
 export default function MoviesScreen() {
   const insets = useSafeAreaInsets();
   
-  // Download state
-  const [checkingDownload, setCheckingDownload] = useState(true);
-  const [downloadComplete, setDownloadComplete] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [currentCategory, setCurrentCategory] = useState('');
-  const [categoryProgress, setCategoryProgress] = useState(0);
-  const [overallProgress, setOverallProgress] = useState({ current: 0, total: DOWNLOAD_CATEGORIES.length });
-  const [categoryStatuses, setCategoryStatuses] = useState<Map<string, 'pending' | 'downloading' | 'completed' | 'error'>>(new Map());
-  
   // Content state
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [categories, setCategories] = useState<Map<string, MediaItem[]>>(new Map());
   
@@ -62,50 +45,15 @@ export default function MoviesScreen() {
     setFilter, setSort, setGenre, clearFilters 
   } = useMediaStore();
 
-  // Verificar se já foi feito download
+  // Carregar dados online ao abrir
   useEffect(() => {
-    const checkDownloadStatus = async () => {
-      try {
-        // IMPORTANTE: Limpar qualquer cache antigo na primeira execução
-        const hasCheckedBefore = await AsyncStorage.getItem('@saimo_first_check_done');
-        if (!hasCheckedBefore) {
-          // Primeira execução - limpar tudo
-          await clearAllDownloads();
-          await AsyncStorage.removeItem(DOWNLOAD_COMPLETE_KEY);
-          await AsyncStorage.setItem('@saimo_first_check_done', 'true');
-          setDownloadComplete(false);
-          setCheckingDownload(false);
-          return;
-        }
-
-        const complete = await AsyncStorage.getItem(DOWNLOAD_COMPLETE_KEY);
-        if (complete === 'true') {
-          // Verificar se realmente tem dados
-          const downloaded = await getDownloadedCategories();
-          if (downloaded.size > 0) {
-            setDownloadComplete(true);
-          }
-        }
-      } catch (e) {
-        console.warn('Erro ao verificar download:', e);
-      } finally {
-        setCheckingDownload(false);
-      }
-    };
-    checkDownloadStatus();
+    loadCatalog();
   }, []);
-
-  // Carregar dados após download completo
-  useEffect(() => {
-    if (downloadComplete && !loading) {
-      loadCatalog();
-    }
-  }, [downloadComplete]);
 
   const loadCatalog = async () => {
     setLoading(true);
     try {
-      const data = await loadAllCachedCategories();
+      const data = await loadInitialCategories();
       setCategories(data);
     } catch (e) {
       console.error('Erro ao carregar catálogo:', e);
@@ -115,62 +63,9 @@ export default function MoviesScreen() {
     }
   };
 
-  // Iniciar download
-  const startDownload = async () => {
-    setDownloading(true);
-    
-    // Inicializar status de todas as categorias
-    const initialStatuses = new Map<string, 'pending' | 'downloading' | 'completed' | 'error'>();
-    DOWNLOAD_CATEGORIES.forEach(cat => initialStatuses.set(cat.id, 'pending'));
-    setCategoryStatuses(initialStatuses);
-    
-    try {
-      await downloadAllCategories(
-        // Callback por categoria
-        (categoryId, progress, status, itemCount, bytesDownloaded) => {
-          const cat = DOWNLOAD_CATEGORIES.find(c => c.id === categoryId);
-          if (cat) {
-            const mbDownloaded = bytesDownloaded ? (bytesDownloaded / (1024 * 1024)).toFixed(1) : '0';
-            const statusText = status === 'processing' ? 'Processando' : 'Baixando';
-            setCurrentCategory(`${statusText} ${cat.name} (${mbDownloaded}MB)`);
-          }
-          setCategoryProgress(progress);
-          setCategoryStatuses(prev => {
-            const newMap = new Map(prev);
-            const newStatus = status === 'completed' ? 'completed' : status === 'error' ? 'error' : 'downloading';
-            newMap.set(categoryId, newStatus);
-            return newMap;
-          });
-        },
-        // Callback de progresso geral
-        (current, total) => {
-          setOverallProgress({ current, total });
-        }
-      );
-      
-      // Marcar como completo
-      await AsyncStorage.setItem(DOWNLOAD_COMPLETE_KEY, 'true');
-      setDownloadComplete(true);
-      
-    } catch (e) {
-      console.error('Erro no download:', e);
-    } finally {
-      setDownloading(false);
-    }
-  };
-
-  // Resetar downloads
-  const resetDownloads = async () => {
-    await clearAllDownloads();
-    await AsyncStorage.removeItem(DOWNLOAD_COMPLETE_KEY);
-    setDownloadComplete(false);
-    setCategories(new Map());
-    setCategoryStatuses(new Map());
-    setOverallProgress({ current: 0, total: DOWNLOAD_CATEGORIES.length });
-  };
-
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
+    clearMemoryCache();
     loadCatalog();
   }, []);
 
@@ -207,98 +102,11 @@ export default function MoviesScreen() {
 
   const showGrid = searchQuery.trim() || activeFilter !== 'all' || activeGenre;
 
-  // Tela de carregamento inicial
-  if (checkingDownload) {
-    return (
-      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={Colors.primary} />
-      </View>
-    );
-  }
-
-  // Tela de download
-  if (!downloadComplete) {
-    const completedCount = Array.from(categoryStatuses.values()).filter(s => s === 'completed').length;
-    const overallPercent = DOWNLOAD_CATEGORIES.length > 0 
-      ? Math.round((overallProgress.current / DOWNLOAD_CATEGORIES.length) * 100)
-      : 0;
-
-    return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
-        
-        <ScrollView 
-          contentContainerStyle={styles.downloadContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          <Ionicons name="cloud-download" size={48} color={Colors.primary} />
-          <Text style={styles.downloadTitle}>Baixar Catálogo</Text>
-          <Text style={styles.downloadDesc}>
-            Baixe as listas de filmes e séries para visualizar o catálogo completo.
-          </Text>
-          
-          {!downloading ? (
-            <TouchableOpacity style={styles.downloadButton} onPress={startDownload}>
-              <Ionicons name="download" size={24} color="#000" />
-              <Text style={styles.downloadButtonText}>Iniciar Download</Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.progressSection}>
-              {/* Barra de progresso geral */}
-              <View style={styles.overallProgress}>
-                <Text style={styles.overallProgressText}>
-                  {completedCount}/{DOWNLOAD_CATEGORIES.length} categorias
-                </Text>
-                <View style={styles.progressBarContainer}>
-                  <View style={[styles.progressBar, { width: `${overallPercent}%` }]} />
-                </View>
-              </View>
-              
-              {/* Categoria atual */}
-              <View style={styles.currentCategorySection}>
-                <ActivityIndicator size="small" color={Colors.primary} />
-                <Text style={styles.currentCategoryText}>{currentCategory}</Text>
-              </View>
-            </View>
-          )}
-          
-          {/* Lista de categorias */}
-          <View style={styles.categoryList}>
-            {DOWNLOAD_CATEGORIES.map((cat) => {
-              const status = categoryStatuses.get(cat.id) || 'pending';
-              return (
-                <View key={cat.id} style={styles.categoryItem}>
-                  <View style={styles.categoryInfo}>
-                    <Text style={styles.categoryName}>{cat.name}</Text>
-                    <Text style={styles.categorySize}>~{cat.sizeMB}MB</Text>
-                  </View>
-                  <View style={styles.categoryStatus}>
-                    {status === 'completed' && (
-                      <Ionicons name="checkmark-circle" size={20} color="#10B981" />
-                    )}
-                    {status === 'downloading' && (
-                      <ActivityIndicator size="small" color={Colors.primary} />
-                    )}
-                    {status === 'error' && (
-                      <Ionicons name="alert-circle" size={20} color="#EF4444" />
-                    )}
-                    {status === 'pending' && (
-                      <Ionicons name="cloud-outline" size={20} color={Colors.textSecondary} />
-                    )}
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  // Tela de carregamento do catálogo
+  // Tela de carregamento
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
         <ActivityIndicator size="large" color={Colors.primary} />
         <Text style={styles.loadingText}>Carregando catálogo...</Text>
       </View>
@@ -408,7 +216,7 @@ export default function MoviesScreen() {
             </View>
           </View>
         ) : (
-          DOWNLOAD_CATEGORIES.map((cat) => {
+          CATEGORIES.map((cat) => {
             const items = categories.get(cat.id) || [];
             if (items.length === 0) return null;
             return (
@@ -433,106 +241,6 @@ const styles = StyleSheet.create({
   },
   center: {
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  downloadContainer: {
-    flexGrow: 1,
-    padding: Spacing.xl,
-    paddingBottom: 120, // Espaço para o menu inferior
-    alignItems: 'center',
-  },
-  downloadTitle: {
-    color: Colors.text,
-    fontSize: Typography.h1.fontSize,
-    fontWeight: '700',
-    marginTop: Spacing.lg,
-    textAlign: 'center',
-  },
-  downloadDesc: {
-    color: Colors.textSecondary,
-    fontSize: Typography.body.fontSize,
-    textAlign: 'center',
-    marginTop: Spacing.sm,
-    lineHeight: 22,
-    maxWidth: 300,
-  },
-  downloadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    marginTop: Spacing.xl,
-    gap: Spacing.sm,
-  },
-  downloadButtonText: {
-    color: '#000',
-    fontSize: Typography.body.fontSize,
-    fontWeight: '700',
-  },
-  progressSection: {
-    width: '100%',
-    marginTop: Spacing.xl,
-    alignItems: 'center',
-  },
-  overallProgress: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  overallProgressText: {
-    color: Colors.text,
-    fontSize: Typography.h2.fontSize,
-    fontWeight: '700',
-    marginBottom: Spacing.sm,
-  },
-  progressBarContainer: {
-    width: '100%',
-    height: 8,
-    backgroundColor: Colors.surface,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: Colors.primary,
-    borderRadius: 4,
-  },
-  currentCategorySection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: Spacing.md,
-    gap: Spacing.sm,
-  },
-  currentCategoryText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.body.fontSize,
-  },
-  categoryList: {
-    width: '100%',
-    marginTop: Spacing.xl,
-  },
-  categoryItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.surface,
-  },
-  categoryInfo: {
-    flex: 1,
-  },
-  categoryName: {
-    color: Colors.text,
-    fontSize: Typography.body.fontSize,
-  },
-  categorySize: {
-    color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
-  },
-  categoryStatus: {
-    width: 24,
     alignItems: 'center',
   },
   loadingText: {

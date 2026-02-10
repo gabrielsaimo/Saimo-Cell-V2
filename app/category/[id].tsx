@@ -13,14 +13,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
-import { loadCategory } from '../../services/mediaService';
+import { loadCategory, loadMoreForCategory } from '../../services/mediaService';
+import { categoryHasMore } from '../../services/streamingService';
 import { useMediaStore } from '../../stores/mediaStore';
 import type { MediaItem } from '../../types';
 import MediaCard from '../../components/MediaCard';
 import FilterBar from '../../components/FilterBar';
 import { filterMedia, sortMedia, getAllGenres } from '../../services/mediaService';
-
-const ITEMS_PER_PAGE = 50; // Carregar 50 por vez
 
 export default function CategoryScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
@@ -28,37 +27,34 @@ export default function CategoryScreen() {
   const insets = useSafeAreaInsets();
   
   const [loading, setLoading] = useState(true);
-  const [allItems, setAllItems] = useState<MediaItem[]>([]); // Todos os itens
-  const [displayCount, setDisplayCount] = useState(ITEMS_PER_PAGE); // Quantos exibir
+  const [allItems, setAllItems] = useState<MediaItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   
   const { 
     activeFilter, activeSort, activeGenre,
     setFilter, setSort, setGenre, clearFilters 
   } = useMediaStore();
 
+  // Carregar primeira página online
   useEffect(() => {
     async function load() {
       if (!id) return;
+      setLoading(true);
       const data = await loadCategory(id);
       setAllItems(data);
-      setDisplayCount(ITEMS_PER_PAGE); // Resetar contagem ao mudar categoria
+      setHasMore(categoryHasMore(id));
       setLoading(false);
     }
     load();
   }, [id]);
-
-  // Resetar contagem quando filtros mudam
-  useEffect(() => {
-    setDisplayCount(ITEMS_PER_PAGE);
-  }, [activeFilter, activeGenre, activeSort]);
 
   const handleBack = () => router.back();
 
   // Gêneros
   const genres = useMemo(() => getAllGenres(allItems), [allItems]);
 
-  // Filtrar e ordenar TODOS os itens
+  // Filtrar e ordenar TODOS os itens carregados
   const filteredItems = useMemo(() => {
     let result = allItems;
     
@@ -73,26 +69,21 @@ export default function CategoryScreen() {
     return result;
   }, [allItems, activeFilter, activeGenre, activeSort]);
 
-  // Itens visíveis (paginados)
-  const visibleItems = useMemo(() => {
-    return filteredItems.slice(0, displayCount);
-  }, [filteredItems, displayCount]);
-
-  // Verificar se há mais para carregar
-  const hasMore = displayCount < filteredItems.length;
-
-  // Carregar mais itens
-  const loadMore = useCallback(() => {
-    if (loadingMore || !hasMore) return;
+  // Carregar mais páginas online
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || !id) return;
     
     setLoadingMore(true);
-    
-    // Simular pequeno delay para UX
-    setTimeout(() => {
-      setDisplayCount(prev => Math.min(prev + ITEMS_PER_PAGE, filteredItems.length));
+    try {
+      const result = await loadMoreForCategory(id);
+      setAllItems(result.items);
+      setHasMore(result.hasMore);
+    } catch (e) {
+      console.warn('Erro ao carregar mais:', e);
+    } finally {
       setLoadingMore(false);
-    }, 100);
-  }, [loadingMore, hasMore, filteredItems.length]);
+    }
+  }, [loadingMore, hasMore, id]);
 
   // Footer com indicador de loading
   const renderFooter = useCallback(() => {
@@ -104,12 +95,12 @@ export default function CategoryScreen() {
           <ActivityIndicator size="small" color={Colors.primary} />
         ) : (
           <Text style={styles.footerText}>
-            Mostrando {visibleItems.length} de {filteredItems.length}
+            {filteredItems.length} títulos carregados
           </Text>
         )}
       </View>
     );
-  }, [hasMore, loadingMore, visibleItems.length, filteredItems.length]);
+  }, [hasMore, loadingMore, filteredItems.length]);
 
   if (loading) {
     return (
@@ -131,7 +122,7 @@ export default function CategoryScreen() {
         <View style={styles.titleContainer}>
           <Text style={styles.title}>{name || 'Categoria'}</Text>
           <Text style={styles.count}>
-            {visibleItems.length} de {filteredItems.length} títulos
+            {filteredItems.length} títulos{hasMore ? '+' : ''}
           </Text>
         </View>
         <View style={{ width: 40 }} />
@@ -149,9 +140,9 @@ export default function CategoryScreen() {
         onClear={clearFilters}
       />
       
-      {/* Grid com Infinite Scroll */}
+      {/* Grid com Infinite Scroll Online */}
       <FlatList
-        data={visibleItems}
+        data={filteredItems}
         keyExtractor={(item) => item.id}
         numColumns={3}
         contentContainerStyle={styles.grid}
@@ -165,7 +156,7 @@ export default function CategoryScreen() {
         maxToRenderPerBatch={15}
         windowSize={5}
         removeClippedSubviews
-        // Infinite scroll
+        // Infinite scroll - carrega próxima página online
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
         ListFooterComponent={renderFooter}

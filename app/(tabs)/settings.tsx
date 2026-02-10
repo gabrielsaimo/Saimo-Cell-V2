@@ -17,7 +17,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { clearEPGCache } from '../../services/epgService';
-import { clearAllDownloads } from '../../services/downloadService';
+import { clearMemoryCache } from '../../services/streamingService';
 import PinModal from '../../components/PinModal';
 
 export default function SettingsScreen() {
@@ -84,24 +84,18 @@ export default function SettingsScreen() {
     );
    }, [clearFavorites]);
 
-  const handleClearMediaDownloads = useCallback(() => {
+  const handleClearMediaCache = useCallback(() => {
     Alert.alert(
-      'Limpar Filmes/Séries',
-      'Deseja apagar todos os dados de filmes e séries baixados? Você precisará baixar novamente.',
+      'Limpar Cache de Mídia',
+      'Deseja limpar o cache de filmes e séries? Os dados serão recarregados da internet.',
       [
         { text: 'Cancelar', style: 'cancel' },
         { 
-          text: 'Apagar Tudo', 
+          text: 'Limpar', 
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await clearAllDownloads();
-              await AsyncStorage.removeItem('@saimo_download_complete');
-              await AsyncStorage.removeItem('@saimo_first_check_done');
-              Alert.alert('Sucesso', 'Dados de mídia apagados! Reinicie o app para baixar novamente.');
-            } catch (e) {
-              Alert.alert('Erro', 'Não foi possível apagar os dados.');
-            }
+          onPress: () => {
+            clearMemoryCache();
+            Alert.alert('Sucesso', 'Cache de mídia limpo! Volte à aba Filmes para recarregar.');
           }
         },
       ]
@@ -220,10 +214,10 @@ export default function SettingsScreen() {
           
           <View style={styles.divider} />
           
-          <TouchableOpacity style={styles.settingRow} onPress={handleClearMediaDownloads}>
+          <TouchableOpacity style={styles.settingRow} onPress={handleClearMediaCache}>
             <View style={styles.settingInfo}>
-              <Ionicons name="cloud-download-outline" size={22} color={Colors.error} />
-              <Text style={styles.settingLabel}>Apagar Filmes/Séries Baixados</Text>
+              <Ionicons name="trash-outline" size={22} color={Colors.error} />
+              <Text style={styles.settingLabel}>Limpar Cache de Mídia</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
           </TouchableOpacity>

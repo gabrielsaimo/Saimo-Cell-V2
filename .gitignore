@@ -43,6 +43,8 @@ yarn-error.log*
 # Cache de downloads locais (Arquivos temporários e finais)
 /media_cache/
 media_cache/
+android/
+ios/
 *.mp4
 *.mkv
 *.avi
