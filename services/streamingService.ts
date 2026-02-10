@@ -15,7 +15,7 @@ const LAST_PAGE = new Map<string, number>(); // última página conhecida
 const HAS_MORE = new Map<string, boolean>(); // se há mais páginas
 
 // Número de categorias carregadas em paralelo
-const PARALLEL_BATCH_SIZE = 6;
+export const PARALLEL_BATCH_SIZE = 4; // Reduzido para mostrar itens mais rápido
 
 // TODAS as categorias
 export const CATEGORIES = [

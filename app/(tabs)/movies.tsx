@@ -22,7 +22,19 @@ import {
   sortMedia,
   getAllGenres,
 } from '../../services/mediaService';
-import { CATEGORIES, clearMemoryCache } from '../../services/streamingService';
+import { 
+  CATEGORIES, 
+  clearMemoryCache,
+  fetchCategoryPage,
+  PARALLEL_BATCH_SIZE
+} from '../../services/streamingService';
+import { useSettingsStore } from '../../stores/settingsStore';
+
+const ADULT_CATEGORY_IDS = [
+  'hot-adultos-bella-da-semana',
+  'hot-adultos-legendado',
+  'hot-adultos',
+];
 import type { MediaItem } from '../../types';
 import MediaRow from '../../components/MediaRow';
 import MediaCard from '../../components/MediaCard';
@@ -44,17 +56,59 @@ export default function MoviesScreen() {
     activeFilter, activeSort, activeGenre,
     setFilter, setSort, setGenre, clearFilters 
   } = useMediaStore();
+  
+  const { adultUnlocked } = useSettingsStore();
 
   // Carregar dados online ao abrir
   useEffect(() => {
     loadCatalog();
-  }, []);
+  }, [adultUnlocked]); // Recarregar se o status adulto mudar
 
   const loadCatalog = async () => {
     setLoading(true);
+    setCategories(new Map()); // Limpar anteriores
+
     try {
-      const data = await loadInitialCategories();
-      setCategories(data);
+      // 1. Filtrar categorias baseado na configuração adulto
+      const relevantCategories = CATEGORIES.filter(cat => {
+        if (!adultUnlocked && ADULT_CATEGORY_IDS.includes(cat.id)) {
+          return false;
+        }
+        return true;
+      });
+
+      // 2. Carregar em batches para aparecer aos poucos
+      for (let i = 0; i < relevantCategories.length; i += PARALLEL_BATCH_SIZE) {
+        const batch = relevantCategories.slice(i, i + PARALLEL_BATCH_SIZE);
+        
+        const batchResults = await Promise.all(
+          batch.map(async (cat) => {
+            try {
+              const items = await fetchCategoryPage(cat.id, 1);
+              return { id: cat.id, items };
+            } catch (err) {
+              console.warn(`Erro ao carregar categoria ${cat.id}`, err);
+              return { id: cat.id, items: [] };
+            }
+          })
+        );
+
+        // Atualizar estado incrementalmente
+        setCategories(prev => {
+          const newMap = new Map(prev);
+          batchResults.forEach(({ id, items }) => {
+            if (items.length > 0) {
+              newMap.set(id, items);
+            }
+          });
+          return newMap;
+        });
+
+        // Se for o primeiro batch, já tira o loading full screen
+        if (i === 0) {
+          setLoading(false);
+        }
+      }
     } catch (e) {
       console.error('Erro ao carregar catálogo:', e);
     } finally {
@@ -210,21 +264,27 @@ export default function MoviesScreen() {
               {filteredItems.length} resultado{filteredItems.length !== 1 ? 's' : ''}
             </Text>
             <View style={styles.grid}>
-              {filteredItems.slice(0, 50).map((item) => (
+              {filteredItems.map((item) => (
                 <MediaCard key={item.id} item={item} size="small" />
               ))}
             </View>
           </View>
         ) : (
           CATEGORIES.map((cat) => {
+             // Verificação extra de segurança para conteúdo adulto
+            if (!adultUnlocked && ADULT_CATEGORY_IDS.includes(cat.id)) {
+              return null;
+            }
+
             const items = categories.get(cat.id) || [];
             if (items.length === 0) return null;
+            
             return (
               <MediaRow
                 key={cat.id}
                 title={cat.name}
                 categoryId={cat.id}
-                items={items}
+                items={items.slice(0, 10)}
               />
             );
           })
