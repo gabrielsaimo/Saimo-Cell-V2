@@ -29,7 +29,7 @@ import {
   stopLoading,
   getAllLoadedCategories,
   getTotalLoadedCount,
-  invalidateP1Cache,
+  clearAllCaches,
   searchInLoadedData,
   hydrateFromDisk,
 } from '../../services/streamingService';
@@ -227,17 +227,18 @@ export default function MoviesScreen() {
   const loadCatalog = async (isRefresh: boolean) => {
     // Na primeira abertura, restaurar cache do disco (instantâneo)
     if (!isRefresh && !catalogLoadedRef.current) {
-      await hydrateFromDisk();
+      const hydrated = hydrateFromDisk();
+      console.log('[Movies] Hydration result:', hydrated);
     }
 
-    // Se é refresh e já tem dados no cache: NÃO limpar
-    // Apenas re-fetch p1 de cada categoria para dados frescos
+    // Verificar se já tem dados na memória (do disco ou sessão anterior)
     const cachedCategories = getAllLoadedCategories();
     const cachedCount = getTotalLoadedCount();
     const hasCache = cachedCategories.size > 0;
 
     if (hasCache && !isRefresh) {
-      // Primeira abertura mas já tem cache de sessão anterior: usar direto
+      // Tem cache do disco: mostrar imediatamente
+      console.log('[Movies] Using disk cache:', cachedCount, 'items');
       setCategories(cachedCategories);
       setTotalLoaded(cachedCount);
       setLoading(false);
@@ -247,11 +248,8 @@ export default function MoviesScreen() {
       return;
     }
 
-    if (!hasCache) {
-      // Nenhum cache: loading full screen
-      setLoading(true);
-    }
-    // Se é refresh com cache: manter dados visíveis (não limpar categories)
+    // Sem cache ou refresh: carregar tudo da rede
+    setLoading(true);
 
     try {
       const relevantCategories = CATEGORIES.filter(cat => {
@@ -261,12 +259,6 @@ export default function MoviesScreen() {
 
       // Parar background loading anterior se existir
       await stopLoading();
-
-      // Se é refresh: invalidar cache de p1 para forçar re-fetch
-      // Mas NÃO limpar tudo - manter p2, p3, etc
-      if (isRefresh) {
-        invalidateP1Cache();
-      }
 
       // Carregar p1 de cada categoria em batches
       for (let i = 0; i < relevantCategories.length; i += PARALLEL_BATCH_SIZE) {
@@ -317,9 +309,25 @@ export default function MoviesScreen() {
     }
   };
 
-  const handleRefresh = useCallback(() => {
+  // Pull-to-refresh (swipe down): NÃO limpa nada, apenas atualiza o spinner
+  // O catálogo já está carregado e salvo em cache — não precisa recarregar
+  const handlePullRefresh = useCallback(() => {
     setRefreshing(true);
-    // NÃO limpar cache! Apenas re-fetch p1s com dados frescos
+    // Apenas sincronizar dados do cache na tela (caso background tenha novos)
+    const loaded = getAllLoadedCategories();
+    setCategories(loaded);
+    setTotalLoaded(getTotalLoadedCount());
+    setRefreshing(false);
+  }, []);
+
+  // Botão reload no header: limpa TUDO (memória + disco) e recarrega do zero
+  const handleHardReload = useCallback(() => {
+    setRefreshing(true);
+    stopLoading();
+    clearAllCaches();
+    setCategories(new Map());
+    setTotalLoaded(0);
+    catalogLoadedRef.current = false;
     loadCatalog(true);
   }, [adultUnlocked]);
 
@@ -411,11 +419,11 @@ export default function MoviesScreen() {
   const refreshControl = useMemo(() => (
     <RefreshControl
       refreshing={refreshing}
-      onRefresh={handleRefresh}
+      onRefresh={handlePullRefresh}
       tintColor={Colors.primary}
       colors={[Colors.primary]}
     />
-  ), [refreshing, handleRefresh]);
+  ), [refreshing, handlePullRefresh]);
 
   // Header component para a grid view
   const GridHeader = useMemo(() => {
@@ -499,7 +507,7 @@ export default function MoviesScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.headerButton, styles.refreshButton]}
-              onPress={handleRefresh}
+              onPress={handleHardReload}
             >
               <Ionicons name="refresh" size={20} color={Colors.text} />
             </TouchableOpacity>

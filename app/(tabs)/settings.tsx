@@ -17,7 +17,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { clearEPGCache } from '../../services/epgService';
-import { clearMemoryCache } from '../../services/streamingService';
+import { clearAllCaches } from '../../services/streamingService';
 import PinModal from '../../components/PinModal';
 
 export default function SettingsScreen() {
@@ -104,7 +104,7 @@ export default function SettingsScreen() {
           text: 'Limpar', 
           style: 'destructive',
           onPress: () => {
-            clearMemoryCache();
+            clearAllCaches();
             Alert.alert('Sucesso', 'Cache de mídia limpo! Volte à aba Filmes para recarregar.');
           }
         },

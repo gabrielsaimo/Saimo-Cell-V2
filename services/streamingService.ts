@@ -19,70 +19,121 @@ const HAS_MORE = new Map<string, boolean>(); // se há mais páginas
 // Persistent disk cache (survives app restarts)
 // Uses expo-file-system v19 new API (Paths/File/Directory)
 // ============================================================
-const DISK_DIR = new Directory(Paths.document, 'sc');
+let _diskDir: Directory | null = null;
 let _diskReady = false;
 
-function ensureDisk(): void {
-    if (_diskReady) return;
+function getDiskDir(): Directory {
+    if (!_diskDir) {
+        _diskDir = new Directory(Paths.document, 'sc');
+    }
+    return _diskDir;
+}
+
+function ensureDisk(): boolean {
+    if (_diskReady) return true;
+    // Never give up permanently — always retry (filesystem may become ready later)
     try {
-        if (!DISK_DIR.exists) {
-            DISK_DIR.create({ intermediates: true, idempotent: true });
+        const dir = getDiskDir();
+        if (!dir.exists) {
+            dir.create({ intermediates: true, idempotent: true });
         }
         _diskReady = true;
-    } catch {
-        _diskReady = true;
+        console.log('[DiskCache] Disk ready at:', dir.uri);
+        return true;
+    } catch (e) {
+        console.warn('[DiskCache] ensureDisk failed (will retry):', e);
+        return false;
     }
 }
 
-/** Save page to disk (deferred via setTimeout, never blocks caller) */
+/** Save page to disk (synchronous — file.write is sync in v19) */
 function diskSave(key: string, items: MediaItem[]): void {
-    setTimeout(() => {
-        try {
-            ensureDisk();
-            const file = new FSFile(DISK_DIR, `${key}.json`);
-            file.write(JSON.stringify(items));
-        } catch {}
-    }, 0);
+    try {
+        if (!ensureDisk()) return;
+        const dir = getDiskDir();
+        const file = new FSFile(dir, `${key}.json`);
+        const content = JSON.stringify(items);
+        // Always use overwrite:true — safely handles both new and existing files
+        // Without this, create() throws if file already exists (race condition with parallel batches)
+        file.create({ overwrite: true });
+        file.write(content);
+        // Verify the write actually persisted
+        if (!file.exists || file.size === 0) {
+            console.warn('[DiskCache] diskSave verify FAILED:', key, 'exists:', file.exists, 'size:', file.size);
+        }
+    } catch (e) {
+        console.warn('[DiskCache] diskSave failed:', key, e);
+    }
 }
 
-/** Read page from disk (async to avoid blocking JS thread on large files) */
-async function diskLoad(key: string): Promise<MediaItem[] | null> {
+/** Read page from disk (sync for speed — no async overhead) */
+function diskLoad(key: string): MediaItem[] | null {
     try {
-        ensureDisk();
-        const file = new FSFile(DISK_DIR, `${key}.json`);
+        if (!ensureDisk()) return null;
+        const dir = getDiskDir();
+        const file = new FSFile(dir, `${key}.json`);
         if (!file.exists) return null;
-        const raw = await file.text();
+        if (file.size === 0) return null;
+        // Use textSync() for faster reads — no Promise overhead
+        const raw = file.textSync();
+        if (!raw || raw.length < 2) return null;
         return JSON.parse(raw);
-    } catch {
+    } catch (e) {
+        console.warn('[DiskCache] diskLoad failed:', key, e);
         return null;
     }
 }
 
 /**
- * Hydrate p1 pages from disk for instant startup display.
- * Only loads first page of each category (~55 small files in parallel).
- * Background loading then lazily loads remaining pages from disk.
+ * Hydrate ALL pages from disk for instant startup display.
+ * Restores the full catalog if it was previously cached.
  * Returns true if any data was restored.
  */
-export async function hydrateFromDisk(): Promise<boolean> {
-    ensureDisk();
+export function hydrateFromDisk(): boolean {
+    if (!ensureDisk()) {
+        console.warn('[DiskCache] Hydration skipped — disk unavailable');
+        return false;
+    }
+
     let restored = false;
+    let count = 0;
+    let totalItems = 0;
 
-    const promises = CATEGORIES.map(async (cat) => {
-        const key = `${cat.id}-p1`;
-        if (PAGE_CACHE.has(key)) return;
+    for (const cat of CATEGORIES) {
+        // Restore ALL pages for this category (p1, p2, p3, ...)
+        let page = 1;
+        let catItems: MediaItem[] = [];
 
-        const items = await diskLoad(key);
-        if (items && items.length > 0) {
+        while (true) {
+            const key = `${cat.id}-p${page}`;
+            if (PAGE_CACHE.has(key)) {
+                // Already in memory, still count it
+                catItems.push(...(PAGE_CACHE.get(key) || []));
+                page++;
+                continue;
+            }
+
+            const items = diskLoad(key);
+            if (!items || items.length === 0) break;
+
             PAGE_CACHE.set(key, items);
-            CATEGORY_CACHE.set(cat.id, items);
-            LAST_PAGE.set(cat.id, 1);
-            if (items.length >= 50) HAS_MORE.set(cat.id, true);
+            catItems.push(...items);
             restored = true;
+            page++;
         }
-    });
 
-    await Promise.all(promises);
+        if (catItems.length > 0) {
+            CATEGORY_CACHE.set(cat.id, deduplicateItems(catItems));
+            LAST_PAGE.set(cat.id, page - 1);
+            // If last page had full 50 items, there might be more
+            const lastPageItems = PAGE_CACHE.get(`${cat.id}-p${page - 1}`);
+            HAS_MORE.set(cat.id, lastPageItems ? lastPageItems.length >= 50 : false);
+            count++;
+            totalItems += catItems.length;
+        }
+    }
+
+    console.log(`[DiskCache] Hydration complete: ${count} categories, ${totalItems} items restored`);
     return restored;
 }
 
@@ -173,7 +224,7 @@ export async function fetchCategoryPage(
     }
 
     // Disk cache hit (fast local I/O, no network)
-    const diskItems = await diskLoad(cacheKey);
+    const diskItems = diskLoad(cacheKey);
     if (diskItems && diskItems.length > 0) {
         PAGE_CACHE.set(cacheKey, diskItems);
         const existing = CATEGORY_CACHE.get(categoryId) || [];
@@ -359,16 +410,28 @@ export function searchInLoadedData(query: string): MediaItem[] {
 // Cache management
 // ============================================================
 
-export function clearMemoryCache() {
+/** Clear memory caches only — disk cache stays intact for next startup */
+export function clearOnlyMemory() {
     PAGE_CACHE.clear();
     CATEGORY_CACHE.clear();
     LAST_PAGE.clear();
     HAS_MORE.clear();
-    // Clear disk cache too
+}
+
+/** Clear EVERYTHING: memory + disk. Used only by the hard reload button. */
+export function clearAllCaches() {
+    PAGE_CACHE.clear();
+    CATEGORY_CACHE.clear();
+    LAST_PAGE.clear();
+    HAS_MORE.clear();
     try {
-        if (DISK_DIR.exists) DISK_DIR.delete();
+        const dir = getDiskDir();
+        if (dir.exists) dir.delete();
         _diskReady = false;
-    } catch {}
+        console.log('[DiskCache] All caches cleared (memory + disk)');
+    } catch (e) {
+        console.warn('[DiskCache] disk delete failed:', e);
+    }
 }
 
 /**
@@ -377,14 +440,16 @@ export function clearMemoryCache() {
  * sem perder as páginas já carregadas (p2, p3, etc).
  */
 export function invalidateP1Cache() {
+    const dir = getDiskDir();
     for (const cat of CATEGORIES) {
         PAGE_CACHE.delete(`${cat.id}-p1`);
-        // Also remove from disk so refresh fetches fresh data
         if (_diskReady) {
             try {
-                const file = new FSFile(DISK_DIR, `${cat.id}-p1.json`);
+                const file = new FSFile(dir, `${cat.id}-p1.json`);
                 if (file.exists) file.delete();
-            } catch {}
+            } catch (e) {
+                console.warn('[DiskCache] invalidateP1Cache delete failed:', cat.id, e);
+            }
         }
     }
 }

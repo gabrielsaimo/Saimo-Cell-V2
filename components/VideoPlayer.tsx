@@ -16,10 +16,10 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Channel, CurrentProgram, Program } from '../types';
+import type { Channel, CurrentProgram } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
-import { getCurrentProgram, fetchChannelEPG, getChannelEPG } from '../services/epgService';
+import { getCurrentProgram, fetchChannelEPG } from '../services/epgService';
 import { channels as allChannelsList } from '../data/channels';
 
 function getResolutionLabel(h: number): string {
@@ -30,10 +30,6 @@ function getResolutionLabel(h: number): string {
   if (h >= 480) return '480p';
   if (h >= 360) return '360p';
   return `${h}p`;
-}
-
-function formatTime(date: Date): string {
-  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 }
 
 interface VideoPlayerProps {
