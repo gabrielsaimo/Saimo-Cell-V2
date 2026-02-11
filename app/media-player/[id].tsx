@@ -18,6 +18,17 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
 
+// Resolve a altura do vídeo em label legível
+function getResolutionLabel(h: number): string {
+  if (h >= 2160) return '4K';
+  if (h >= 1440) return '2K';
+  if (h >= 1080) return '1080p';
+  if (h >= 720) return '720p';
+  if (h >= 480) return '480p';
+  if (h >= 360) return '360p';
+  return `${h}p`;
+}
+
 // Formatar tempo em mm:ss ou hh:mm:ss
 function formatTime(seconds: number): string {
   if (isNaN(seconds) || seconds < 0) return '00:00';
@@ -91,6 +102,7 @@ export default function MediaPlayerScreen() {
   // Progress state
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [resolution, setResolution] = useState<string | null>(null);
 
   const videoRef = useRef<Video>(null);
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,6 +174,17 @@ export default function MediaPlayerScreen() {
     }
     if (status.durationMillis !== undefined && status.durationMillis > 0) {
       setDuration(status.durationMillis / 1000);
+    }
+  }, []);
+
+  // Detect video resolution when ready for display
+  const handleReadyForDisplay = useCallback((event: any) => {
+    const { naturalSize } = event;
+    if (naturalSize) {
+      const h = Math.min(naturalSize.width, naturalSize.height);
+      const w = Math.max(naturalSize.width, naturalSize.height);
+      // Use the smaller dimension as height (accounts for orientation)
+      setResolution(getResolutionLabel(naturalSize.orientation === 'landscape' ? h : Math.min(w, h)));
     }
   }, []);
 
@@ -299,6 +322,7 @@ export default function MediaPlayerScreen() {
             isLooping={false}
             useNativeControls={false}
             onPlaybackStatusUpdate={onPlaybackStatusUpdate}
+            onReadyForDisplay={handleReadyForDisplay}
             onError={(err: string) => {
               console.error('[MediaPlayer] Video onError:', err);
               setDebugInfo(prev => `${prev}\nonError: ${err}`);
@@ -350,7 +374,11 @@ export default function MediaPlayerScreen() {
               <Ionicons name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
             <Text style={styles.title} numberOfLines={1}>{title || 'Reproduzindo'}</Text>
-            <View style={{ width: 40 }} />
+            {resolution && (
+              <View style={styles.resolutionBadge}>
+                <Text style={styles.resolutionText}>{resolution}</Text>
+              </View>
+            )}
           </View>
 
           {/* Center controls */}
@@ -572,5 +600,19 @@ const styles = StyleSheet.create({
   progressText: {
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
+  },
+  resolutionBadge: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  resolutionText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

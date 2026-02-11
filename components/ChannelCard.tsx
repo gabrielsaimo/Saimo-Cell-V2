@@ -15,7 +15,7 @@ import type { Channel, CurrentProgram } from '../types';
 import { Colors, BorderRadius, Spacing, Typography, Shadows } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { getCurrentProgram } from '../services/epgService';
+import { getCurrentProgram, onEPGUpdate } from '../services/epgService';
 
 interface ChannelCardProps {
   channel: Channel;
@@ -34,17 +34,22 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
   const [currentEPG, setCurrentEPG] = useState<CurrentProgram | null>(null);
   const isMountedRef = useRef(true);
 
-  // Carrega EPG do cache (SEM bloquear, SEM fetch)
+  // Carrega EPG do cache e escuta atualizações (prefetch feito pelo index.tsx)
   useEffect(() => {
     isMountedRef.current = true;
-    
+
     if (showEPG) {
-      // Apenas lê do cache, nunca faz fetch aqui
-      const epg = getCurrentProgram(channel.id);
-      setCurrentEPG(epg);
+      setCurrentEPG(getCurrentProgram(channel.id));
     }
 
-    // Atualiza do cache a cada 60 segundos
+    // Escuta atualizações do EPG (quando fetch terminar, atualiza o card)
+    const unsubscribe = onEPGUpdate((updatedId) => {
+      if (isMountedRef.current && updatedId === channel.id && showEPG) {
+        setCurrentEPG(getCurrentProgram(channel.id));
+      }
+    });
+
+    // Atualiza progresso do programa a cada 60 segundos
     const interval = setInterval(() => {
       if (isMountedRef.current && showEPG) {
         setCurrentEPG(getCurrentProgram(channel.id));
@@ -53,6 +58,7 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
 
     return () => {
       isMountedRef.current = false;
+      unsubscribe();
       clearInterval(interval);
     };
   }, [channel.id, showEPG]);

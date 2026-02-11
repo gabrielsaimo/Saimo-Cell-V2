@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Dimensions,
   StatusBar,
   BackHandler,
+  ScrollView,
 } from 'react-native';
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -15,10 +16,25 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Channel, CurrentProgram } from '../types';
+import type { Channel, CurrentProgram, Program } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
-import { getCurrentProgram, fetchChannelEPG } from '../services/epgService';
+import { getCurrentProgram, fetchChannelEPG, getChannelEPG } from '../services/epgService';
+import { channels as allChannelsList } from '../data/channels';
+
+function getResolutionLabel(h: number): string {
+  if (h >= 2160) return '4K';
+  if (h >= 1440) return '2K';
+  if (h >= 1080) return '1080p';
+  if (h >= 720) return '720p';
+  if (h >= 480) return '480p';
+  if (h >= 360) return '360p';
+  return `${h}p`;
+}
+
+function formatTime(date: Date): string {
+  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+}
 
 interface VideoPlayerProps {
   channel: Channel;
@@ -31,6 +47,8 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const [showControls, setShowControls] = useState(true);
   const [epg, setEpg] = useState<CurrentProgram | null>(null);
   const [hasError, setHasError] = useState(false);
+  const [resolution, setResolution] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(false);
 
   const { toggleFavorite, isFavorite } = useFavoritesStore();
   const [favorite, setFavorite] = useState(isFavorite(channel.id));
@@ -137,10 +155,14 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   }, [channel.id, toggleFavorite]);
 
   const handleScreenPress = useCallback(() => {
+    if (showGuide) {
+      setShowGuide(false);
+      return;
+    }
     if (!hasError) {
       setShowControls(prev => !prev);
     }
-  }, [hasError]);
+  }, [hasError, showGuide]);
 
   const handleRetry = useCallback(async () => {
     setHasError(false);
@@ -154,6 +176,57 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
       setHasError(true);
     }
   }, [channel.url]);
+
+  // Detect video resolution
+  const handleReadyForDisplay = useCallback((event: any) => {
+    const { naturalSize } = event;
+    if (naturalSize) {
+      const h = naturalSize.orientation === 'landscape'
+        ? Math.min(naturalSize.width, naturalSize.height)
+        : Math.min(naturalSize.width, naturalSize.height);
+      setResolution(getResolutionLabel(h));
+    }
+  }, []);
+
+  // Guide global - todos os canais com programa atual
+  const guideChannels = useMemo(() => {
+    if (!showGuide) return [];
+    return allChannelsList.map(ch => ({
+      channel: ch,
+      epg: getCurrentProgram(ch.id),
+    }));
+  }, [showGuide]);
+
+  const guideScrollRef = useRef<ScrollView>(null);
+
+  const handleToggleGuide = useCallback(() => {
+    setShowGuide(prev => !prev);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    if (!showGuide) setShowControls(true);
+  }, [showGuide]);
+
+  const handleSwitchChannel = useCallback((targetChannel: Channel) => {
+    setShowGuide(false);
+    isMountedRef.current = false;
+    try { videoRef.current?.pauseAsync(); } catch {}
+    router.replace({
+      pathname: '/player/[id]',
+      params: { id: targetChannel.id },
+    });
+  }, [router]);
+
+  // Scroll para o canal atual quando o guia abrir
+  useEffect(() => {
+    if (showGuide && guideScrollRef.current) {
+      const idx = allChannelsList.findIndex(ch => ch.id === channel.id);
+      if (idx > 0) {
+        // Cada item tem ~52px de altura
+        setTimeout(() => {
+          guideScrollRef.current?.scrollTo({ y: Math.max(0, idx * 52 - 60), animated: false });
+        }, 50);
+      }
+    }
+  }, [showGuide, channel.id]);
 
   const { width, height } = Dimensions.get('window');
 
@@ -184,6 +257,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
           isLooping={false}
           useNativeControls={false}
           onPlaybackStatusUpdate={onPlaybackStatusUpdate}
+          onReadyForDisplay={handleReadyForDisplay}
         />
 
         {/* Error State */}
@@ -224,8 +298,21 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                 <Text style={styles.channelCategory}>{channel.category}</Text>
               </View>
 
+              {resolution && (
+                <View style={styles.resolutionBadge}>
+                  <Text style={styles.resolutionText}>{resolution}</Text>
+                </View>
+              )}
+
               <TouchableOpacity
-                style={[styles.iconButton, favorite && styles.iconButtonActive]}
+                style={[styles.iconButton, showGuide && styles.iconButtonActive]}
+                onPress={handleToggleGuide}
+              >
+                <Ionicons name="list" size={24} color={Colors.text} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.iconButton, favorite && styles.iconButtonFav]}
                 onPress={handleToggleFavorite}
               >
                 <Ionicons
@@ -279,6 +366,65 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               </View>
             </View>
           </>
+        )}
+
+        {/* Global Programming Guide Overlay */}
+        {showGuide && (
+          <View style={styles.guideOverlay}>
+            <TouchableOpacity style={styles.guideBackdrop} onPress={handleToggleGuide} activeOpacity={1} />
+            <View style={styles.guideContainer}>
+              <View style={styles.guideHeader}>
+                <Ionicons name="tv-outline" size={18} color={Colors.primary} />
+                <Text style={styles.guideTitle}>Guia de Canais</Text>
+                <TouchableOpacity onPress={handleToggleGuide} style={styles.guideClose}>
+                  <Ionicons name="close" size={24} color={Colors.text} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView
+                ref={guideScrollRef}
+                style={styles.guideList}
+                showsVerticalScrollIndicator={false}
+              >
+                {guideChannels.map(({ channel: ch, epg: chEpg }) => {
+                  const isActive = ch.id === channel.id;
+                  return (
+                    <TouchableOpacity
+                      key={ch.id}
+                      style={[styles.guideItem, isActive && styles.guideItemActive]}
+                      onPress={() => !isActive && handleSwitchChannel(ch)}
+                      activeOpacity={isActive ? 1 : 0.6}
+                    >
+                      <View style={styles.guideChannelNum}>
+                        <Text style={[styles.guideNumText, isActive && styles.guideNumTextActive]}>
+                          {ch.channelNumber}
+                        </Text>
+                      </View>
+                      <View style={styles.guideChannelInfo}>
+                        <Text
+                          style={[styles.guideChannelName, isActive && styles.guideChannelNameActive]}
+                          numberOfLines={1}
+                        >
+                          {ch.name}
+                        </Text>
+                        {chEpg?.current ? (
+                          <Text style={styles.guideProgramName} numberOfLines={1}>
+                            {chEpg.current.title}
+                          </Text>
+                        ) : (
+                          <Text style={styles.guideProgramEmpty}>{ch.category}</Text>
+                        )}
+                      </View>
+                      {isActive && (
+                        <View style={styles.guideActiveBadge}>
+                          <View style={styles.guideActiveDot} />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
         )}
       </TouchableOpacity>
     </View>
@@ -375,7 +521,25 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.full,
   },
   iconButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  iconButtonFav: {
     backgroundColor: 'rgba(255, 71, 87, 0.2)',
+  },
+  resolutionBadge: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+    marginLeft: Spacing.sm,
+  },
+  resolutionText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   bottomBar: {
     position: 'absolute',
@@ -448,5 +612,96 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
     flex: 1,
+  },
+  // Guide overlay styles
+  guideOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+  },
+  guideBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  guideContainer: {
+    width: '50%',
+    backgroundColor: 'rgba(20,20,20,0.98)',
+  },
+  guideHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+    gap: Spacing.sm,
+  },
+  guideTitle: {
+    color: Colors.text,
+    fontSize: Typography.body.fontSize,
+    fontWeight: '700',
+    flex: 1,
+  },
+  guideClose: {
+    padding: Spacing.xs,
+  },
+  guideList: {
+    flex: 1,
+  },
+  guideItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  guideItemActive: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.primary,
+  },
+  guideChannelNum: {
+    width: 32,
+    alignItems: 'center',
+  },
+  guideNumText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+  },
+  guideNumTextActive: {
+    color: Colors.primary,
+  },
+  guideChannelInfo: {
+    flex: 1,
+    marginLeft: Spacing.sm,
+  },
+  guideChannelName: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  guideChannelNameActive: {
+    color: Colors.primary,
+  },
+  guideProgramName: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  guideProgramEmpty: {
+    color: 'rgba(255,255,255,0.25)',
+    fontSize: 11,
+    marginTop: 1,
+  },
+  guideActiveBadge: {
+    marginLeft: Spacing.sm,
+  },
+  guideActiveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.live,
   },
 });

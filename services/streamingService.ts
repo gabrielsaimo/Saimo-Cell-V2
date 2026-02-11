@@ -1,6 +1,7 @@
 // Serviço de streaming online - carrega dados sob demanda via fetch
 // Substitui o downloadService.ts - sem downloads, tudo online
 import type { MediaItem } from '../types';
+import { Paths, File as FSFile, Directory } from 'expo-file-system';
 
 const GITHUB_BASE = 'https://raw.githubusercontent.com/gabrielsaimo/free-tv/main/public/data/enriched/';
 
@@ -13,6 +14,77 @@ const CATEGORY_CACHE = new Map<string, MediaItem[]>();
 // Controle de última página por categoria
 const LAST_PAGE = new Map<string, number>(); // última página conhecida
 const HAS_MORE = new Map<string, boolean>(); // se há mais páginas
+
+// ============================================================
+// Persistent disk cache (survives app restarts)
+// Uses expo-file-system v19 new API (Paths/File/Directory)
+// ============================================================
+const DISK_DIR = new Directory(Paths.document, 'sc');
+let _diskReady = false;
+
+function ensureDisk(): void {
+    if (_diskReady) return;
+    try {
+        if (!DISK_DIR.exists) {
+            DISK_DIR.create({ intermediates: true, idempotent: true });
+        }
+        _diskReady = true;
+    } catch {
+        _diskReady = true;
+    }
+}
+
+/** Save page to disk (deferred via setTimeout, never blocks caller) */
+function diskSave(key: string, items: MediaItem[]): void {
+    setTimeout(() => {
+        try {
+            ensureDisk();
+            const file = new FSFile(DISK_DIR, `${key}.json`);
+            file.write(JSON.stringify(items));
+        } catch {}
+    }, 0);
+}
+
+/** Read page from disk (async to avoid blocking JS thread on large files) */
+async function diskLoad(key: string): Promise<MediaItem[] | null> {
+    try {
+        ensureDisk();
+        const file = new FSFile(DISK_DIR, `${key}.json`);
+        if (!file.exists) return null;
+        const raw = await file.text();
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Hydrate p1 pages from disk for instant startup display.
+ * Only loads first page of each category (~55 small files in parallel).
+ * Background loading then lazily loads remaining pages from disk.
+ * Returns true if any data was restored.
+ */
+export async function hydrateFromDisk(): Promise<boolean> {
+    ensureDisk();
+    let restored = false;
+
+    const promises = CATEGORIES.map(async (cat) => {
+        const key = `${cat.id}-p1`;
+        if (PAGE_CACHE.has(key)) return;
+
+        const items = await diskLoad(key);
+        if (items && items.length > 0) {
+            PAGE_CACHE.set(key, items);
+            CATEGORY_CACHE.set(cat.id, items);
+            LAST_PAGE.set(cat.id, 1);
+            if (items.length >= 50) HAS_MORE.set(cat.id, true);
+            restored = true;
+        }
+    });
+
+    await Promise.all(promises);
+    return restored;
+}
 
 // Número de categorias carregadas em paralelo
 export const PARALLEL_BATCH_SIZE = 4; // Reduzido para mostrar itens mais rápido
@@ -95,9 +167,22 @@ export async function fetchCategoryPage(
 ): Promise<MediaItem[]> {
     const cacheKey = `${categoryId}-p${page}`;
 
-    // Cache hit
+    // Memory cache hit
     if (PAGE_CACHE.has(cacheKey)) {
         return PAGE_CACHE.get(cacheKey)!;
+    }
+
+    // Disk cache hit (fast local I/O, no network)
+    const diskItems = await diskLoad(cacheKey);
+    if (diskItems && diskItems.length > 0) {
+        PAGE_CACHE.set(cacheKey, diskItems);
+        const existing = CATEGORY_CACHE.get(categoryId) || [];
+        CATEGORY_CACHE.set(categoryId, deduplicateItems([...existing, ...diskItems]));
+        const currentLast = LAST_PAGE.get(categoryId) || 0;
+        if (page > currentLast) LAST_PAGE.set(categoryId, page);
+        if (diskItems.length < 50) HAS_MORE.set(categoryId, false);
+        else if (!HAS_MORE.has(categoryId)) HAS_MORE.set(categoryId, true);
+        return diskItems;
     }
 
     try {
@@ -120,8 +205,9 @@ export async function fetchCategoryPage(
         // Processar itens (manter apenas campos essenciais)
         const items: MediaItem[] = data.map((obj: any, index: number) => createMediaItem(obj, index));
 
-        // Cachear a página
+        // Cachear a página (memória + disco)
         PAGE_CACHE.set(cacheKey, items);
+        diskSave(cacheKey, items);
 
         // Atualizar cache consolidado
         const existing = CATEGORY_CACHE.get(categoryId) || [];
@@ -273,15 +359,55 @@ export function searchInLoadedData(query: string): MediaItem[] {
 // Cache management
 // ============================================================
 
+export function clearMemoryCache() {
+    PAGE_CACHE.clear();
+    CATEGORY_CACHE.clear();
+    LAST_PAGE.clear();
+    HAS_MORE.clear();
+    // Clear disk cache too
+    try {
+        if (DISK_DIR.exists) DISK_DIR.delete();
+        _diskReady = false;
+    } catch {}
+}
+
 /**
- * Limpa todo o cache em memória
+ * Invalida apenas o cache de p1 de todas as categorias.
+ * Usado no refresh para forçar re-fetch de dados frescos
+ * sem perder as páginas já carregadas (p2, p3, etc).
  */
-HAS_MORE.clear();
+export function invalidateP1Cache() {
+    for (const cat of CATEGORIES) {
+        PAGE_CACHE.delete(`${cat.id}-p1`);
+        // Also remove from disk so refresh fetches fresh data
+        if (_diskReady) {
+            try {
+                const file = new FSFile(DISK_DIR, `${cat.id}-p1.json`);
+                if (file.exists) file.delete();
+            } catch {}
+        }
+    }
+}
+
+/**
+ * Retorna snapshot de todas as categorias carregadas no cache
+ */
+export function getAllLoadedCategories(): Map<string, MediaItem[]> {
+    return new Map(CATEGORY_CACHE);
+}
+
+/**
+ * Retorna o total de itens carregados em todas as categorias
+ */
+export function getTotalLoadedCount(): number {
+    let count = 0;
+    CATEGORY_CACHE.forEach(items => { count += items.length; });
+    return count;
 }
 
 /**
  * Inicia o carregamento em segundo plano de TODAS as páginas restantes.
- * Executa sequencialmente com delay para não travar a UI.
+ * Usa paralelismo controlado (2 categorias simultâneas) com delays para não travar UI.
  */
 let isBackgroundLoading = false;
 let stopBackgroundLoading = false;
@@ -289,6 +415,14 @@ let stopBackgroundLoading = false;
 export async function stopLoading() {
     stopBackgroundLoading = true;
 }
+
+export function isLoadingInBackground(): boolean {
+    return isBackgroundLoading;
+}
+
+const BG_PARALLEL = 2;       // categorias em paralelo no background
+const BG_PAGE_DELAY = 100;   // ms entre páginas (curto pq é background)
+const BG_CAT_DELAY = 50;     // ms entre categorias
 
 export async function startBackgroundLoading(
     onNewData?: () => void
@@ -299,45 +433,50 @@ export async function startBackgroundLoading(
 
     console.log('[BackgroundLoad] Iniciando carregamento profundo...');
 
-    // Iterar por todas as categorias
-    for (const cat of CATEGORIES) {
+    // Processar categorias em batches de BG_PARALLEL
+    for (let i = 0; i < CATEGORIES.length; i += BG_PARALLEL) {
         if (stopBackgroundLoading) break;
 
-        // Enquanto houver mais páginas nesta categoria...
-        while (HAS_MORE.get(cat.id) !== false && !stopBackgroundLoading) {
-            // Verificar se temos a próxima página no cache
-            const currentPage = LAST_PAGE.get(cat.id) || 1;
-            const nextPage = currentPage + 1;
-            const key = `${cat.id}-p${nextPage}`;
+        const batch = CATEGORIES.slice(i, i + BG_PARALLEL);
 
-            if (PAGE_CACHE.has(key)) {
-                // Já tem, passa pra próxima
-                continue;
-            }
+        // Carregar todas as páginas de cada categoria do batch em paralelo
+        await Promise.all(
+            batch.map(async (cat) => {
+                if (stopBackgroundLoading) return;
 
-            try {
-                // Carregar próxima página
-                const newItems = await fetchCategoryPage(cat.id, nextPage);
+                while (HAS_MORE.get(cat.id) !== false && !stopBackgroundLoading) {
+                    const currentPage = LAST_PAGE.get(cat.id) || 1;
+                    const nextPage = currentPage + 1;
+                    const key = `${cat.id}-p${nextPage}`;
 
-                if (newItems.length > 0) {
-                    // Notificar UI que tem dados novos (para busca)
-                    if (onNewData) onNewData();
+                    if (PAGE_CACHE.has(key)) {
+                        // Já cached, pular (safety: avançar LAST_PAGE)
+                        if (nextPage > currentPage) LAST_PAGE.set(cat.id, nextPage);
+                        continue;
+                    }
 
-                    // Pequeno delay para respirar a thread JS
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                } else {
-                    // Se veio vazio, break o loop dessa categoria (HAS_MORE já foi setado false pelo fetch)
-                    break;
+                    try {
+                        const newItems = await fetchCategoryPage(cat.id, nextPage);
+                        if (newItems.length === 0) break;
+
+                        // Delay curto para ceder a thread JS
+                        await new Promise(r => setTimeout(r, BG_PAGE_DELAY));
+                    } catch {
+                        break;
+                    }
                 }
-            } catch (err) {
-                // Erro silencioso no background
-                break;
-            }
-        }
+            })
+        );
 
-        // Delay entre categorias
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Notificar UI após cada batch de categorias
+        if (onNewData && !stopBackgroundLoading) onNewData();
+
+        // Delay entre batches
+        await new Promise(r => setTimeout(r, BG_CAT_DELAY));
     }
+
+    // Notificação final
+    if (onNewData) onNewData();
 
     isBackgroundLoading = false;
     console.log('[BackgroundLoad] Finalizado.');
@@ -378,7 +517,7 @@ function createMediaItem(obj: any, index: number): MediaItem {
             backdrop: obj.tmdb.backdrop,
             backdropHD: obj.tmdb.backdropHD,
             logo: obj.tmdb.logo,
-            cast: obj.tmdb.cast?.slice(0, 10) || [],
+            cast: obj.tmdb.cast || [],
         } : undefined,
     };
 }

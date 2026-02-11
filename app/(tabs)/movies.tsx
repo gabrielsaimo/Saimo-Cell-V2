@@ -1,14 +1,15 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView,
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
   StatusBar,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  FlatList,
+  InteractionManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,17 +17,21 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
 import {
-  loadInitialCategories,
-  searchMedia,
   filterMedia,
   sortMedia,
   getAllGenres,
 } from '../../services/mediaService';
-import { 
-  CATEGORIES, 
-  clearMemoryCache,
+import {
+  CATEGORIES,
   fetchCategoryPage,
-  PARALLEL_BATCH_SIZE
+  PARALLEL_BATCH_SIZE,
+  startBackgroundLoading,
+  stopLoading,
+  getAllLoadedCategories,
+  getTotalLoadedCount,
+  invalidateP1Cache,
+  searchInLoadedData,
+  hydrateFromDisk,
 } from '../../services/streamingService';
 import { useSettingsStore } from '../../stores/settingsStore';
 
@@ -40,47 +45,233 @@ import MediaRow from '../../components/MediaRow';
 import MediaCard from '../../components/MediaCard';
 import FilterBar from '../../components/FilterBar';
 
+// Intervalo mínimo entre syncs do background → UI (ms)
+const BG_SYNC_INTERVAL = 5000;
+// Debounce da busca (ms) - só pesquisa após o usuário parar de digitar
+const SEARCH_DEBOUNCE = 600;
+// Limite máximo de resultados na grid (previne renderizar arrays gigantes)
+const MAX_GRID_RESULTS = 500;
+
+type CategoryRowData = {
+  id: string;
+  name: string;
+  items: MediaItem[];
+};
+
 export default function MoviesScreen() {
   const insets = useSafeAreaInsets();
-  
+
   // Content state
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [categories, setCategories] = useState<Map<string, MediaItem[]>>(new Map());
-  
-  const [searchQuery, setSearchQuery] = useState('');
+  const [totalLoaded, setTotalLoaded] = useState(0);
+  const [bgLoading, setBgLoading] = useState(false);
+
+  // Search: input separado do query efetivo (debounced)
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Resultados de busca (assíncrono — nunca bloqueia o render)
+  const [searchResults, setSearchResults] = useState<MediaItem[]>([]);
+  const [searching, setSearching] = useState(false);
+
   const [showSearch, setShowSearch] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  
-  const { 
+
+  const {
     activeFilter, activeSort, activeGenre,
-    setFilter, setSort, setGenre, clearFilters 
+    setFilter, setSort, setGenre, clearFilters
   } = useMediaStore();
-  
+
   const { adultUnlocked } = useSettingsStore();
+
+  // Refs para controle do background sync
+  const lastSyncRef = useRef(0);
+  const mountedRef = useRef(true);
+  const catalogLoadedRef = useRef(false);
+
+  // Cleanup ao desmontar
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      stopLoading();
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
+
+  // Busca assíncrona: quando debouncedQuery muda, computa resultados FORA do render
+  // Isso evita bloquear a thread JS com searchMedia em 50k+ itens
+  useEffect(() => {
+    if (!debouncedQuery.trim()) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+
+    // setTimeout(16ms) = ~1 frame — deixa o render completar antes de computar
+    const timeoutId = setTimeout(() => {
+      try {
+        // Busca direto no cache sem criar allItems (evita OOM)
+        let results = searchInLoadedData(debouncedQuery);
+
+        if (activeFilter !== 'all') {
+          results = filterMedia(results, activeFilter);
+        }
+        if (activeGenre) {
+          results = filterMedia(results, undefined, activeGenre);
+        }
+        results = sortMedia(results, activeSort);
+
+        if (results.length > MAX_GRID_RESULTS) {
+          results = results.slice(0, MAX_GRID_RESULTS);
+        }
+
+        if (mountedRef.current) {
+          setSearchResults(results);
+          setSearching(false);
+        }
+      } catch (e) {
+        console.warn('[Movies] Erro na busca:', e);
+        if (mountedRef.current) {
+          setSearchResults([]);
+          setSearching(false);
+        }
+      }
+    }, 16);
+
+    return () => clearTimeout(timeoutId);
+  }, [debouncedQuery, activeFilter, activeGenre, activeSort]);
+
+  // Debounce do search: só aplica o filtro após o usuário parar de digitar
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchInput(text);
+    isSearchActiveRef.current = !!text.trim();
+
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
+    if (!text.trim()) {
+      // Se limpou, aplica imediatamente e reativa sync
+      setDebouncedQuery('');
+      isSearchActiveRef.current = false;
+      // Sincronizar dados que podem ter sido acumulados durante a busca
+      const loaded = getAllLoadedCategories();
+      setCategories(loaded);
+      setTotalLoaded(getTotalLoadedCount());
+      return;
+    }
+
+    searchTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        setDebouncedQuery(text);
+      }
+    }, SEARCH_DEBOUNCE);
+  }, []);
+
+  const clearSearch = useCallback(() => {
+    setSearchInput('');
+    setDebouncedQuery('');
+    isSearchActiveRef.current = false;
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    // Sincronizar dados acumulados
+    const loaded = getAllLoadedCategories();
+    setCategories(loaded);
+    setTotalLoaded(getTotalLoadedCount());
+  }, []);
 
   // Carregar dados online ao abrir
   useEffect(() => {
-    loadCatalog();
-  }, [adultUnlocked]); // Recarregar se o status adulto mudar
+    loadCatalog(false);
+  }, [adultUnlocked]);
 
-  const loadCatalog = async () => {
-    setLoading(true);
-    setCategories(new Map()); // Limpar anteriores
+  // Ref para saber se search está ativo (evita re-renders pesados durante busca)
+  const isSearchActiveRef = useRef(false);
+
+  // Sync periódico do cache → UI durante background loading
+  // NÃO faz sync se a busca está ativa (evita recomputar allItems+filteredItems)
+  const syncFromCache = useCallback(() => {
+    if (!mountedRef.current) return;
+    if (isSearchActiveRef.current) return; // Pula sync durante busca
+    const now = Date.now();
+    if (now - lastSyncRef.current < BG_SYNC_INTERVAL) return;
+    lastSyncRef.current = now;
+
+    const loaded = getAllLoadedCategories();
+    setCategories(loaded);
+    setTotalLoaded(getTotalLoadedCount());
+  }, []);
+
+  // Iniciar background loading (separado para poder reusar)
+  const startBgLoad = useCallback(() => {
+    InteractionManager.runAfterInteractions(() => {
+      if (!mountedRef.current) return;
+      setBgLoading(true);
+
+      startBackgroundLoading(() => {
+        if (mountedRef.current) syncFromCache();
+      }).then(() => {
+        if (mountedRef.current) {
+          const loaded = getAllLoadedCategories();
+          setCategories(loaded);
+          setTotalLoaded(getTotalLoadedCount());
+          setBgLoading(false);
+        }
+      });
+    });
+  }, [syncFromCache]);
+
+  const loadCatalog = async (isRefresh: boolean) => {
+    // Na primeira abertura, restaurar cache do disco (instantâneo)
+    if (!isRefresh && !catalogLoadedRef.current) {
+      await hydrateFromDisk();
+    }
+
+    // Se é refresh e já tem dados no cache: NÃO limpar
+    // Apenas re-fetch p1 de cada categoria para dados frescos
+    const cachedCategories = getAllLoadedCategories();
+    const cachedCount = getTotalLoadedCount();
+    const hasCache = cachedCategories.size > 0;
+
+    if (hasCache && !isRefresh) {
+      // Primeira abertura mas já tem cache de sessão anterior: usar direto
+      setCategories(cachedCategories);
+      setTotalLoaded(cachedCount);
+      setLoading(false);
+      // Continuar background loading para páginas restantes
+      startBgLoad();
+      catalogLoadedRef.current = true;
+      return;
+    }
+
+    if (!hasCache) {
+      // Nenhum cache: loading full screen
+      setLoading(true);
+    }
+    // Se é refresh com cache: manter dados visíveis (não limpar categories)
 
     try {
-      // 1. Filtrar categorias baseado na configuração adulto
       const relevantCategories = CATEGORIES.filter(cat => {
-        if (!adultUnlocked && ADULT_CATEGORY_IDS.includes(cat.id)) {
-          return false;
-        }
+        if (!adultUnlocked && ADULT_CATEGORY_IDS.includes(cat.id)) return false;
         return true;
       });
 
-      // 2. Carregar em batches para aparecer aos poucos
+      // Parar background loading anterior se existir
+      await stopLoading();
+
+      // Se é refresh: invalidar cache de p1 para forçar re-fetch
+      // Mas NÃO limpar tudo - manter p2, p3, etc
+      if (isRefresh) {
+        invalidateP1Cache();
+      }
+
+      // Carregar p1 de cada categoria em batches
       for (let i = 0; i < relevantCategories.length; i += PARALLEL_BATCH_SIZE) {
         const batch = relevantCategories.slice(i, i + PARALLEL_BATCH_SIZE);
-        
+
         const batchResults = await Promise.all(
           batch.map(async (cat) => {
             try {
@@ -93,7 +284,8 @@ export default function MoviesScreen() {
           })
         );
 
-        // Atualizar estado incrementalmente
+        if (!mountedRef.current) return;
+
         setCategories(prev => {
           const newMap = new Map(prev);
           batchResults.forEach(({ id, items }) => {
@@ -104,59 +296,158 @@ export default function MoviesScreen() {
           return newMap;
         });
 
-        // Se for o primeiro batch, já tira o loading full screen
         if (i === 0) {
           setLoading(false);
         }
       }
+
+      setTotalLoaded(getTotalLoadedCount());
+      catalogLoadedRef.current = true;
+
+      // Iniciar background loading para páginas restantes
+      startBgLoad();
+
     } catch (e) {
       console.error('Erro ao carregar catálogo:', e);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (mountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    clearMemoryCache();
-    loadCatalog();
-  }, []);
+    // NÃO limpar cache! Apenas re-fetch p1s com dados frescos
+    loadCatalog(true);
+  }, [adultUnlocked]);
 
-  // Todos os itens combinados
+  // Dados para a FlatList de categorias (view de rows)
+  const categoryData = useMemo((): CategoryRowData[] => {
+    return CATEGORIES
+      .filter(cat => {
+        if (!adultUnlocked && ADULT_CATEGORY_IDS.includes(cat.id)) return false;
+        const items = categories.get(cat.id);
+        return items && items.length > 0;
+      })
+      .map(cat => ({
+        id: cat.id,
+        name: cat.name,
+        items: (categories.get(cat.id) || []).slice(0, 10),
+      }));
+  }, [categories, adultUnlocked]);
+
+  // Todos os itens combinados (para filtros/busca)
+  // Usa loop seguro em vez de push(...spread) que causa stack overflow com arrays grandes
   const allItems = useMemo(() => {
-    const items: MediaItem[] = [];
-    categories.forEach(catItems => items.push(...catItems));
+    let total = 0;
+    categories.forEach(catItems => { total += catItems.length; });
+    const items = new Array<MediaItem>(total);
+    let idx = 0;
+    categories.forEach(catItems => {
+      for (let i = 0; i < catItems.length; i++) {
+        items[idx++] = catItems[i];
+      }
+    });
     return items;
   }, [categories]);
 
   // Gêneros disponíveis
   const genres = useMemo(() => getAllGenres(allItems), [allItems]);
 
-  // Itens filtrados
+  // Itens filtrados — SÓ para filtros (tipo/gênero), NÃO para busca
+  // A busca é assíncrona via useEffect acima (evita bloquear o render)
   const filteredItems = useMemo(() => {
-    let items = allItems;
-    
-    if (searchQuery.trim()) {
-      items = searchMedia(searchQuery, items);
-    }
-    
-    if (activeFilter !== 'all') {
-      items = filterMedia(items, activeFilter);
-    }
-    
-    if (activeGenre) {
-      items = filterMedia(items, undefined, activeGenre);
-    }
-    
-    items = sortMedia(items, activeSort);
-    
-    return items;
-  }, [allItems, searchQuery, activeFilter, activeGenre, activeSort]);
+    // Se tem busca ativa, resultados vêm do searchResults (async)
+    if (debouncedQuery.trim()) return [];
 
-  const showGrid = searchQuery.trim() || activeFilter !== 'all' || activeGenre;
+    try {
+      let items = allItems;
 
-  // Tela de carregamento
+      if (activeFilter !== 'all') {
+        items = filterMedia(items, activeFilter);
+      }
+
+      if (activeGenre) {
+        items = filterMedia(items, undefined, activeGenre);
+      }
+
+      items = sortMedia(items, activeSort);
+
+      if (items.length > MAX_GRID_RESULTS) {
+        items = items.slice(0, MAX_GRID_RESULTS);
+      }
+
+      return items;
+    } catch (e) {
+      console.warn('[Movies] Erro ao filtrar:', e);
+      return [];
+    }
+  }, [allItems, debouncedQuery, activeFilter, activeGenre, activeSort]);
+
+  // Dados da grid: busca (async) ou filtros (sync)
+  const gridData = debouncedQuery.trim() ? searchResults : filteredItems;
+
+  // showGrid usa debouncedQuery para não trocar de view enquanto digita
+  const showGrid = debouncedQuery.trim() || activeFilter !== 'all' || activeGenre;
+
+  // Render functions para FlatLists
+  const renderCategoryRow = useCallback(({ item }: { item: CategoryRowData }) => (
+    <MediaRow
+      title={item.name}
+      categoryId={item.id}
+      items={item.items}
+    />
+  ), []);
+
+  const renderGridItem = useCallback(({ item }: { item: MediaItem }) => (
+    <MediaCard item={item} size="small" />
+  ), []);
+
+  const keyExtractorCategory = useCallback((item: CategoryRowData) => item.id, []);
+  const keyExtractorGrid = useCallback((item: MediaItem) => item.id, []);
+
+  const refreshControl = useMemo(() => (
+    <RefreshControl
+      refreshing={refreshing}
+      onRefresh={handleRefresh}
+      tintColor={Colors.primary}
+      colors={[Colors.primary]}
+    />
+  ), [refreshing, handleRefresh]);
+
+  // Header component para a grid view
+  const GridHeader = useMemo(() => {
+    if (searching) {
+      return (
+        <View style={styles.searchingRow}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.resultsText}>Buscando...</Text>
+        </View>
+      );
+    }
+    return (
+      <Text style={styles.resultsText}>
+        {gridData.length} resultado{gridData.length !== 1 ? 's' : ''}
+      </Text>
+    );
+  }, [gridData.length, searching]);
+
+  // Footer com indicador de background loading
+  const ListFooter = useMemo(() => {
+    if (!bgLoading) return null;
+    return (
+      <View style={styles.bgLoadingContainer}>
+        <ActivityIndicator size="small" color={Colors.primary} />
+        <Text style={styles.bgLoadingText}>
+          Carregando mais títulos... ({totalLoaded})
+        </Text>
+      </View>
+    );
+  }, [bgLoading, totalLoaded]);
+
+  // Tela de carregamento (só na primeira vez, sem cache)
   if (loading) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
@@ -171,42 +462,50 @@ export default function MoviesScreen() {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
-      
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View>
             <Text style={styles.title}>Filmes & Séries</Text>
             <Text style={styles.subtitle}>
-              {categories.size} categorias • {allItems.length} títulos
+              {categories.size} categorias • {totalLoaded} títulos
+              {bgLoading ? ' (carregando...)' : ''}
             </Text>
           </View>
           <View style={styles.headerButtons}>
-            <TouchableOpacity 
-              style={styles.headerButton} 
-              onPress={() => setShowSearch(!showSearch)}
+            <TouchableOpacity
+              style={styles.headerButton}
+              onPress={() => {
+                if (showSearch) {
+                  clearSearch();
+                  setShowSearch(false);
+                } else {
+                  setShowSearch(true);
+                }
+              }}
             >
-              <Ionicons 
-                name={showSearch ? 'close' : 'search'} 
-                size={22} 
-                color={Colors.text} 
+              <Ionicons
+                name={showSearch ? 'close' : 'search'}
+                size={22}
+                color={Colors.text}
               />
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={styles.headerButton} 
+            <TouchableOpacity
+              style={styles.headerButton}
               onPress={() => setShowFilters(!showFilters)}
             >
               <Ionicons name="options" size={22} color={Colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.headerButton, styles.refreshButton]} 
+            <TouchableOpacity
+              style={[styles.headerButton, styles.refreshButton]}
               onPress={handleRefresh}
             >
               <Ionicons name="refresh" size={20} color={Colors.text} />
             </TouchableOpacity>
           </View>
         </View>
-        
+
         {/* Search Bar */}
         {showSearch && (
           <View style={styles.searchContainer}>
@@ -215,21 +514,21 @@ export default function MoviesScreen() {
               style={styles.searchInput}
               placeholder="Buscar filmes e séries..."
               placeholderTextColor={Colors.textSecondary}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
+              value={searchInput}
+              onChangeText={handleSearchChange}
               autoFocus
               autoCapitalize="none"
               autoCorrect={false}
             />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
+            {searchInput.length > 0 && (
+              <TouchableOpacity onPress={clearSearch}>
                 <Ionicons name="close-circle" size={20} color={Colors.textSecondary} />
               </TouchableOpacity>
             )}
           </View>
         )}
       </View>
-      
+
       {/* Filters */}
       {showFilters && (
         <FilterBar
@@ -244,52 +543,43 @@ export default function MoviesScreen() {
         />
       )}
 
-      {/* Content */}
-      <ScrollView
-        style={styles.content}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            tintColor={Colors.primary}
-            colors={[Colors.primary]}
-          />
-        }
-      >
-        {showGrid ? (
-          <View style={styles.gridContainer}>
-            <Text style={styles.resultsText}>
-              {filteredItems.length} resultado{filteredItems.length !== 1 ? 's' : ''}
-            </Text>
-            <View style={styles.grid}>
-              {filteredItems.map((item) => (
-                <MediaCard key={item.id} item={item} size="small" />
-              ))}
-            </View>
-          </View>
-        ) : (
-          CATEGORIES.map((cat) => {
-             // Verificação extra de segurança para conteúdo adulto
-            if (!adultUnlocked && ADULT_CATEGORY_IDS.includes(cat.id)) {
-              return null;
-            }
-
-            const items = categories.get(cat.id) || [];
-            if (items.length === 0) return null;
-            
-            return (
-              <MediaRow
-                key={cat.id}
-                title={cat.name}
-                categoryId={cat.id}
-                items={items.slice(0, 10)}
-              />
-            );
-          })
-        )}
-      </ScrollView>
+      {/* Content - Virtualized Lists (key prop forces unmount/remount on view switch) */}
+      {showGrid ? (
+        // Grid view - FlatList virtualizado com colunas
+        <FlatList
+          key="grid-view"
+          data={gridData}
+          keyExtractor={keyExtractorGrid}
+          numColumns={3}
+          renderItem={renderGridItem}
+          contentContainerStyle={[styles.gridContainer, { paddingBottom: insets.bottom + 80 }]}
+          columnWrapperStyle={styles.gridRow}
+          showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
+          ListHeaderComponent={GridHeader}
+          ListFooterComponent={ListFooter}
+          initialNumToRender={15}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          removeClippedSubviews
+        />
+      ) : (
+        // Category rows view - FlatList virtualizado
+        <FlatList
+          key="category-view"
+          data={categoryData}
+          keyExtractor={keyExtractorCategory}
+          renderItem={renderCategoryRow}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
+          ListFooterComponent={ListFooter}
+          initialNumToRender={4}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+          removeClippedSubviews
+        />
+      )}
     </View>
   );
 }
@@ -357,20 +647,33 @@ const styles = StyleSheet.create({
     fontSize: Typography.body.fontSize,
     height: '100%',
   },
-  content: {
-    flex: 1,
-  },
   gridContainer: {
     paddingHorizontal: Spacing.lg,
+  },
+  searchingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
   },
   resultsText: {
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
     marginBottom: Spacing.md,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  gridRow: {
     gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  bgLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  bgLoadingText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
   },
 });

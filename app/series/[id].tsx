@@ -237,7 +237,7 @@ export default function SeriesDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Elenco</Text>
             <FlatList
-              data={tmdb.cast.slice(0, 15)}
+              data={tmdb.cast}
               keyExtractor={(item) => item.id.toString()}
               horizontal
               showsHorizontalScrollIndicator={false}

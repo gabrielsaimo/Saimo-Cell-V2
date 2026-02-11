@@ -318,8 +318,13 @@ export function getEPGStats() {
 
 // Prefetch EPG para canais visíveis
 export async function prefetchEPG(channelIds: string[]): Promise<void> {
-    const promises = channelIds.slice(0, 10).map(id =>
+    const promises = channelIds.map(id =>
         fetchChannelEPG(id).catch(() => [])
     );
     await Promise.all(promises);
+}
+
+// Verifica se canal tem mapeamento EPG (sem fetch)
+export function hasEPGMapping(channelId: string): boolean {
+    return getEPGUrl(channelId) !== null;
 }

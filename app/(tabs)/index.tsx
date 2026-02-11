@@ -1,11 +1,12 @@
 import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
-import { 
-  View, 
+import {
+  View,
   Text,
-  StyleSheet, 
+  StyleSheet,
   StatusBar,
   TextInput,
   TouchableOpacity,
+  InteractionManager,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,7 +15,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useChannelStore } from '../../stores/channelStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { initEPGService, prefetchEPG, getEPGStats } from '../../services/epgService';
+import { initEPGService, prefetchEPG, getEPGStats, hasEPGMapping } from '../../services/epgService';
 import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
@@ -58,36 +59,48 @@ export default function HomeScreen() {
     );
   }, [allChannels, searchQuery]);
 
-  // Prefetch EPG em background (não bloqueia UI)
+  // Prefetch EPG em background para TODOS os canais com mapeamento
+  // IMPORTANTE: não bloqueia UI - usa InteractionManager + yields entre batches
   useEffect(() => {
     if (channels.length > 0 && !prefetchedRef.current) {
       prefetchedRef.current = true;
-      setIsLoadingEPG(true);
-      
-      const channelIds = channels.slice(0, 20).map(c => c.id);
-      const total = channelIds.length;
-      let loaded = 0;
-      
-      setEpgProgress({ loaded: 0, total });
-      
-      // Carrega em batches pequenos para não travar
-      const loadBatch = async (batch: string[]) => {
-        await prefetchEPG(batch);
-        loaded += batch.length;
-        setEpgProgress({ loaded, total });
+
+      const channelIds = channels.filter(c => hasEPGMapping(c.id)).map(c => c.id);
+      if (channelIds.length === 0) return;
+
+      let cancelled = false;
+
+      // Aguarda interações do usuário terminarem antes de começar
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        setIsLoadingEPG(true);
+        const total = channelIds.length;
+        let loaded = 0;
+        setEpgProgress({ loaded: 0, total });
+
+        const loadAll = async () => {
+          for (let i = 0; i < channelIds.length; i += 3) {
+            if (cancelled) return;
+            const batch = channelIds.slice(i, i + 3);
+            await prefetchEPG(batch);
+            loaded += batch.length;
+            // Atualiza progresso a cada 2 batches para reduzir re-renders
+            if (loaded % 6 === 0 || loaded >= total) {
+              setEpgProgress({ loaded: Math.min(loaded, total), total });
+            }
+            // Yield ao UI thread - garante que toques são processados
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          if (!cancelled) setIsLoadingEPG(false);
+        };
+
+        loadAll();
+      });
+
+      return () => {
+        cancelled = true;
+        task.cancel();
       };
-      
-      // Carrega 5 por vez de forma assíncrona
-      const loadAll = async () => {
-        for (let i = 0; i < channelIds.length; i += 5) {
-          const batch = channelIds.slice(i, i + 5);
-          await loadBatch(batch);
-        }
-        setIsLoadingEPG(false);
-      };
-      
-      // Não bloqueia - setTimeout para próximo tick
-      setTimeout(loadAll, 100);
     }
   }, [channels]);
 

@@ -34,12 +34,22 @@ export default function SettingsScreen() {
     setAutoplay,
     adultUnlocked,
     lockAdult,
+    unlockAdult,
   } = useSettingsStore();
   
   const { clearFavorites } = useFavoritesStore();
 
+  const [pinAction, setPinAction] = useState<'change' | 'unlock'>('change');
+
   const handleChangePIN = useCallback(() => {
+    setPinAction('change');
     setPinMode('change');
+    setPinModalVisible(true);
+  }, []);
+
+  const handleUnlockAdult = useCallback(() => {
+    setPinAction('unlock');
+    setPinMode('verify');
     setPinModalVisible(true);
   }, []);
 
@@ -167,6 +177,31 @@ export default function SettingsScreen() {
         {/* Controle Parental */}
         <Text style={styles.sectionTitle}>Controle Parental</Text>
         <View style={styles.section}>
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Ionicons
+                name={adultUnlocked ? 'lock-open-outline' : 'lock-closed-outline'}
+                size={22}
+                color={adultUnlocked ? Colors.accent : Colors.primary}
+              />
+              <Text style={styles.settingLabel}>Conteúdo adulto</Text>
+            </View>
+            <Switch
+              value={adultUnlocked}
+              onValueChange={(value) => {
+                if (value) {
+                  handleUnlockAdult();
+                } else {
+                  handleLockAdult();
+                }
+              }}
+              trackColor={{ false: Colors.border, true: Colors.accent }}
+              thumbColor={Colors.text}
+            />
+          </View>
+
+          <View style={styles.divider} />
+
           <TouchableOpacity style={styles.settingRow} onPress={handleChangePIN}>
             <View style={styles.settingInfo}>
               <Ionicons name="key-outline" size={22} color={Colors.primary} />
@@ -174,21 +209,6 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
           </TouchableOpacity>
-          
-          {adultUnlocked && (
-            <>
-              <View style={styles.divider} />
-              <TouchableOpacity style={styles.settingRow} onPress={handleLockAdult}>
-                <View style={styles.settingInfo}>
-                  <Ionicons name="lock-closed-outline" size={22} color={Colors.accent} />
-                  <Text style={styles.settingLabel}>Bloquear conteúdo adulto</Text>
-                </View>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusText}>Desbloqueado</Text>
-                </View>
-              </TouchableOpacity>
-            </>
-          )}
         </View>
 
         {/* Dados */}
@@ -235,7 +255,12 @@ export default function SettingsScreen() {
         onClose={() => setPinModalVisible(false)}
         onSuccess={() => {
           setPinModalVisible(false);
-          Alert.alert('Sucesso', 'PIN alterado com sucesso!');
+          if (pinAction === 'unlock') {
+            unlockAdult();
+            Alert.alert('Desbloqueado', 'Conteúdo adulto desbloqueado.');
+          } else {
+            Alert.alert('Sucesso', 'PIN alterado com sucesso!');
+          }
         }}
         mode={pinMode}
       />
