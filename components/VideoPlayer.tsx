@@ -8,10 +8,12 @@ import {
   StatusBar,
   BackHandler,
   ScrollView,
+  Platform,
 } from 'react-native';
-import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,61 +41,100 @@ interface VideoPlayerProps {
 export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  
+  // Google Cast Client
+  const client = useRemoteMediaClient();
 
+  // Setup expo-video player
+  const player = useVideoPlayer(channel.url, player => {
+    player.play();
+  });
+
+  const videoViewRef = useRef<VideoView>(null);
   const [showControls, setShowControls] = useState(true);
   const [epg, setEpg] = useState<CurrentProgram | null>(null);
   const [hasError, setHasError] = useState(false);
   const [resolution, setResolution] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [isPip, setIsPip] = useState(false);
 
   const { toggleFavorite, isFavorite } = useFavoritesStore();
   const [favorite, setFavorite] = useState(isFavorite(channel.id));
 
-  const videoRef = useRef<Video>(null);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Handle playback status updates from expo-av
-  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
-    if (!isMountedRef.current) return;
-
-    if (!status.isLoaded) {
-      if (status.error) {
-        setHasError(true);
-      }
-      return;
+  // Cast Media when client connects or channel changes
+  useEffect(() => {
+    if (client) {
+      client.loadMedia({
+        mediaInfo: {
+          contentUrl: channel.url,
+          metadata: {
+            type: 'movie', 
+            title: channel.name,
+            images: channel.logo ? [{ url: channel.logo }] : [],
+          },
+        },
+        autoplay: true,
+      });
     }
+  }, [client, channel]);
 
-    // If it loaded successfully, clear error
-    if (status.isLoaded && hasError) {
-      setHasError(false);
+  // Handle Player Source Change explicitly if needed (useVideoPlayer handles simple string changes, 
+  // but explicitly replacing can be safer for deep updates)
+  useEffect(() => {
+    if (player && channel.url) {
+        // useVideoPlayer handles this, but we can force replace if logic requires
+        // player.replace(channel.url); 
+        // For now relying on useVideoPlayer dependency update
     }
-  }, [hasError]);
+  }, [channel.url, player]);
 
-  // Cleanup ao desmontar
+  // Listener setup
+  useEffect(() => {
+    if (!player) return;
+
+    const subscriptions: any[] = [];
+
+    subscriptions.push(player.addListener('statusChange', (payload) => {
+        if (!isMountedRef.current) return;
+        if (payload.status === 'error') {
+            setHasError(true);
+        }
+    }));
+    
+    // We can also listen to playingChange if needed, though useVideoPlayer hook handles re-renders often
+    // subscriptions.push(player.addListener('playingChange', ...));
+
+    return () => {
+        subscriptions.forEach(s => s.remove());
+    };
+  }, [player]); 
+
+  // Cleanup
   useEffect(() => {
     isMountedRef.current = true;
-
     return () => {
       isMountedRef.current = false;
       try {
-        videoRef.current?.pauseAsync();
+        player.pause();
       } catch (e) {
-        // Ignora erros de cleanup
+        // Ignore pause errors on unmount
+        console.log('Error pausing on unmount:', e);
       }
     };
-  }, []);
+  }, [player]);
 
-  // Forçar orientação paisagem ao entrar
+  // Force Landscape
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-
     return () => {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     };
   }, []);
 
-  // Carregar EPG do canal (não-bloqueante)
+  // Fetch EPG
   useEffect(() => {
     fetchChannelEPG(channel.id).then(() => {
       if (isMountedRef.current) {
@@ -110,7 +151,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     return () => clearInterval(interval);
   }, [channel.id]);
 
-  // Auto-hide dos controles
+  // Auto-hide controls
   useEffect(() => {
     if (showControls && !hasError) {
       controlsTimeoutRef.current = setTimeout(() => {
@@ -119,15 +160,12 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
         }
       }, 3000);
     }
-
     return () => {
-      if (controlsTimeoutRef.current) {
-        clearTimeout(controlsTimeoutRef.current);
-      }
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
     };
   }, [showControls, hasError]);
 
-  // Tratar botão voltar - INSTANTÂNEO
+  // Back Handler
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
       handleBack();
@@ -136,13 +174,15 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     return () => backHandler.remove();
   }, []);
 
-  const handleBack = useCallback(() => {
-    isMountedRef.current = false;
-    try {
-      videoRef.current?.pauseAsync();
-    } catch (e) {}
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+  const handleBack = useCallback(async () => {
+    // Navigate back first, let useEffect cleanup handle the player
     router.back();
+    // Reset orientation after navigation start
+    try {
+      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    } catch (e) {
+      console.warn('Failed to unlock orientation:', e);
+    }
   }, [router]);
 
   const handleToggleFavorite = useCallback(() => {
@@ -160,31 +200,17 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     }
   }, [hasError, showGuide]);
 
-  const handleRetry = useCallback(async () => {
+  const handleRetry = useCallback(() => {
     setHasError(false);
-    try {
-      await videoRef.current?.unloadAsync();
-      await videoRef.current?.loadAsync(
-        { uri: channel.url },
-        { shouldPlay: true }
-      );
-    } catch (e) {
-      setHasError(true);
-    }
-  }, [channel.url]);
+    player.replace(channel.url);
+    player.play();
+  }, [channel.url, player]);
 
-  // Detect video resolution
-  const handleReadyForDisplay = useCallback((event: any) => {
-    const { naturalSize } = event;
-    if (naturalSize) {
-      const h = naturalSize.orientation === 'landscape'
-        ? Math.min(naturalSize.width, naturalSize.height)
-        : Math.min(naturalSize.width, naturalSize.height);
-      setResolution(getResolutionLabel(h));
-    }
-  }, []);
+  // VideoView handles resolution automatically but doesn't expose strict event like "onReadyForDisplay" 
+  // with natural size in the same way. We can inspect player.videoSize if available via event.
+  // For now leaving resolution simplified.
 
-  // Guide global - todos os canais com programa atual
+  // Guide Logic
   const guideChannels = useMemo(() => {
     if (!showGuide) return [];
     return allChannelsList.map(ch => ({
@@ -203,20 +229,18 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 
   const handleSwitchChannel = useCallback((targetChannel: Channel) => {
     setShowGuide(false);
-    isMountedRef.current = false;
-    try { videoRef.current?.pauseAsync(); } catch {}
+    // Just replace the route, useEffect cleanup handles the rest
     router.replace({
       pathname: '/player/[id]',
       params: { id: targetChannel.id },
     });
   }, [router]);
 
-  // Scroll para o canal atual quando o guia abrir
+  // Scroll to current channel in guide
   useEffect(() => {
     if (showGuide && guideScrollRef.current) {
       const idx = allChannelsList.findIndex(ch => ch.id === channel.id);
       if (idx > 0) {
-        // Cada item tem ~52px de altura
         setTimeout(() => {
           guideScrollRef.current?.scrollTo({ y: Math.max(0, idx * 52 - 60), animated: false });
         }, 50);
@@ -226,13 +250,22 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 
   const { width, height } = Dimensions.get('window');
 
-  // Formata tempo restante
   const formatRemaining = (minutes?: number) => {
     if (!minutes) return '';
     if (minutes < 60) return `${minutes}min`;
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours}h${mins}min`;
+  };
+
+  const handlePip = async () => {
+    if (videoViewRef.current) {
+      try {
+        await videoViewRef.current.startPictureInPicture();
+      } catch (e) {
+        console.warn('[VideoPlayer] PiP indisponível:', e);
+      }
+    }
   };
 
   return (
@@ -244,20 +277,25 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
         onPress={handleScreenPress}
         activeOpacity={1}
       >
-        <Video
-          ref={videoRef}
-          source={{ uri: channel.url }}
+        <VideoView
+          ref={videoViewRef}
+          player={player}
           style={{ width: Math.max(width, height), height: Math.min(width, height) }}
-          resizeMode={ResizeMode.CONTAIN}
-          shouldPlay={true}
-          isLooping={false}
-          useNativeControls={false}
-          onPlaybackStatusUpdate={onPlaybackStatusUpdate}
-          onReadyForDisplay={handleReadyForDisplay}
+          contentFit="contain"
+          nativeControls={false}
+          allowsPictureInPicture
+          allowsFullscreen
+          onPictureInPictureStart={() => {
+            setIsPip(true);
+            setShowControls(false);
+          }}
+          onPictureInPictureStop={() => {
+            setIsPip(false);
+          }}
         />
 
         {/* Error State */}
-        {hasError && (
+        {hasError && !isPip && (
           <View style={styles.errorContainer}>
             <Ionicons name="alert-circle-outline" size={64} color={Colors.error} />
             <Text style={styles.errorTitle}>Canal indisponível</Text>
@@ -276,7 +314,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
         )}
 
         {/* Controls Overlay */}
-        {showControls && !hasError && (
+        {showControls && !hasError && !isPip && (
           <>
             <LinearGradient
               colors={['rgba(0,0,0,0.7)', 'transparent', 'transparent', 'rgba(0,0,0,0.7)']}
@@ -293,6 +331,21 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                 <Text style={styles.channelName}>{channel.name}</Text>
                 <Text style={styles.channelCategory}>{channel.category}</Text>
               </View>
+
+              {/* Cast Button */}
+              <View style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center', marginRight: 8 }}>
+                 <CastButton style={{ width: 24, height: 24, tintColor: Colors.text }} />
+              </View>
+
+              {/* PIP Button */}
+              {Platform.OS !== 'web' && (
+                <TouchableOpacity
+                    style={[styles.iconButton]}
+                    onPress={handlePip}
+                >
+                    <MaterialIcons name="picture-in-picture-alt" size={24} color={Colors.text} />
+                </TouchableOpacity>
+              )}
 
               {resolution && (
                 <View style={styles.resolutionBadge}>

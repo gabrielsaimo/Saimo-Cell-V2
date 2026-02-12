@@ -8,12 +8,14 @@ import {
   BackHandler,
   Dimensions,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
-import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
@@ -49,8 +51,6 @@ function formatTime(seconds: number): string {
  */
 async function resolveRedirects(initialUrl: string): Promise<string> {
   try {
-    // Use HEAD with redirect: 'follow' - fetch will follow redirects
-    // and response.url will be the final URL
     const response = await fetch(initialUrl, {
       method: 'HEAD',
       redirect: 'follow',
@@ -62,7 +62,6 @@ async function resolveRedirects(initialUrl: string): Promise<string> {
     console.log('[MediaPlayer] Redirect resolved:', initialUrl, '->', finalUrl);
     return finalUrl;
   } catch (headError) {
-    // HEAD might be blocked, try GET with range header (just 1 byte)
     try {
       const response = await fetch(initialUrl, {
         method: 'GET',
@@ -87,7 +86,6 @@ export default function MediaPlayerScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // Decode the URL that was encoded when navigating to this screen
   const rawUrl = params.url || '';
   const decodedUrl = rawUrl ? decodeURIComponent(rawUrl) : '';
   const { id, title } = params;
@@ -103,20 +101,19 @@ export default function MediaPlayerScreen() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [resolution, setResolution] = useState<string | null>(null);
+  const [isPip, setIsPip] = useState(false);
 
-  const videoRef = useRef<Video>(null);
+  const videoViewRef = useRef<VideoView>(null);
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
   const { addToHistory } = useMediaStore();
+  
+  // Google Cast
+  const client = useRemoteMediaClient();
 
-  // Resolve redirects before playing
+  // Resolve redirects logic
   useEffect(() => {
     isMountedRef.current = true;
-
-    console.log('[MediaPlayer] === DEBUG ===');
-    console.log('[MediaPlayer] Raw param:', rawUrl);
-    console.log('[MediaPlayer] Decoded URL:', decodedUrl);
-
     if (!decodedUrl) {
       setError('URL do vídeo não recebida');
       setDebugInfo('URL vazia - nenhum parâmetro recebido');
@@ -135,60 +132,81 @@ export default function MediaPlayerScreen() {
     }).catch((err) => {
       if (!isMountedRef.current) return;
       console.error('[MediaPlayer] Redirect resolution failed:', err);
-      // Fallback: try with the original URL anyway
       setDebugInfo(`Fallback para URL original: ${decodedUrl}\nErro resolve: ${err}`);
       setResolvedUrl(decodedUrl);
     });
 
-    return () => {
-      isMountedRef.current = false;
-    };
+    return () => { isMountedRef.current = false; };
   }, [decodedUrl]);
 
-  // Handle playback status updates from expo-av
-  const onPlaybackStatusUpdate = useCallback((status: AVPlaybackStatus) => {
-    if (!isMountedRef.current) return;
+  // Load Cast Media
+  useEffect(() => {
+    if (client && resolvedUrl) {
+      client.loadMedia({
+        mediaInfo: {
+          contentUrl: resolvedUrl,
+          metadata: {
+            title: title || 'Filme/Série',
+            subtitle: 'Saimo TV',
+            images: [
+              { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg' },
+            ],
+            type: 'movie',
+          },
+        },
+        autoplay: true,
+      });
+    }
+  }, [client, resolvedUrl, title]);
 
-    if (!status.isLoaded) {
-      if (status.error) {
-        console.error('[MediaPlayer] Playback error:', status.error);
-        setDebugInfo(prev => `${prev}\nPlayback error: ${status.error}`);
-        setError(`Erro ao reproduzir: ${status.error}`);
-        setIsLoading(false);
+  // Expo Video Setup
+  const player = useVideoPlayer(resolvedUrl, (player) => {
+    player.play();
+  });
+
+  // Player Event Listeners
+  useEffect(() => {
+    if (!player) return;
+
+    const subscriptions: any[] = [];
+
+    subscriptions.push(player.addListener('statusChange', (payload) => {
+       if (!isMountedRef.current) return;
+       const { status, error } = payload;
+       
+       if (status === 'loading') {
+         setIsLoading(true);
+       } else {
+         setIsLoading(false);
+         if (status === 'error' && error) {
+            setError(`Erro ao reproduzir: ${error.message}`);
+         }
+       }
+    }));
+
+    subscriptions.push(player.addListener('playingChange', (payload) => {
+       if (!isMountedRef.current) return;
+       setIsPlaying(payload.isPlaying);
+    }));
+
+    subscriptions.push(player.addListener('timeUpdate', (event) => {
+      if (!isMountedRef.current) return;
+      setCurrentTime(event.currentTime);
+      // duration might be available on player.duration
+      if (player.duration) {
+         setDuration(player.duration);
       }
-      return;
-    }
+    }));
+    
+    // Attempt to get resolution from source if possible/available in future updates
+    // subscriptions.push(player.addListener('sourceChange', ...));
 
-    // Update loading state
-    if (status.isBuffering && !status.isPlaying) {
-      setIsLoading(true);
-    } else {
-      setIsLoading(false);
-      setError(null);
-    }
+    return () => {
+      subscriptions.forEach(sub => sub.remove());
+    };
+  }, [player]);
 
-    setIsPlaying(status.isPlaying);
-
-    if (status.positionMillis !== undefined) {
-      setCurrentTime(status.positionMillis / 1000);
-    }
-    if (status.durationMillis !== undefined && status.durationMillis > 0) {
-      setDuration(status.durationMillis / 1000);
-    }
-  }, []);
-
-  // Detect video resolution when ready for display
-  const handleReadyForDisplay = useCallback((event: any) => {
-    const { naturalSize } = event;
-    if (naturalSize) {
-      const h = Math.min(naturalSize.width, naturalSize.height);
-      const w = Math.max(naturalSize.width, naturalSize.height);
-      // Use the smaller dimension as height (accounts for orientation)
-      setResolution(getResolutionLabel(naturalSize.orientation === 'landscape' ? h : Math.min(w, h)));
-    }
-  }, []);
-
-  // Forçar landscape
+  // Force Landscape
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
     return () => {
@@ -196,11 +214,9 @@ export default function MediaPlayerScreen() {
     };
   }, []);
 
-  // Hide controls timer
+  // Controls Timer
   const resetHideTimer = useCallback(() => {
-    if (hideControlsTimer.current) {
-      clearTimeout(hideControlsTimer.current);
-    }
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
     setShowControls(true);
     hideControlsTimer.current = setTimeout(() => {
       if (isPlaying) setShowControls(false);
@@ -214,7 +230,7 @@ export default function MediaPlayerScreen() {
     };
   }, [resetHideTimer]);
 
-  // Back handler
+  // Back Handler
   useEffect(() => {
     const handler = BackHandler.addEventListener('hardwareBackPress', () => {
       handleClose();
@@ -225,116 +241,93 @@ export default function MediaPlayerScreen() {
 
   const handleClose = useCallback(async () => {
     isMountedRef.current = false;
-    try {
-      await videoRef.current?.pauseAsync();
-    } catch (e) {}
+    if (player) player.pause();
     if (id) addToHistory(id);
     router.back();
-  }, [id, router, addToHistory]);
+  }, [id, router, addToHistory, player]);
 
-  const togglePlayPause = useCallback(async () => {
+  const togglePlayPause = useCallback(() => {
     if (isPlaying) {
-      await videoRef.current?.pauseAsync();
+      player.pause();
     } else {
-      await videoRef.current?.playAsync();
+      player.play();
     }
     resetHideTimer();
-  }, [isPlaying, resetHideTimer]);
+  }, [isPlaying, player, resetHideTimer]);
 
-  // Skip forward/backward
-  const handleSkipForward = useCallback(async () => {
-    const newTime = Math.min(currentTime + 10, duration);
-    await videoRef.current?.setPositionAsync(newTime * 1000);
-    setCurrentTime(newTime);
+  const handleSkipForward = useCallback(() => {
+    if (!player) return;
+    const newTime = Math.min(currentTime + 10, duration || currentTime + 10);
+    player.currentTime = newTime;
     resetHideTimer();
-  }, [currentTime, duration, resetHideTimer]);
+  }, [currentTime, duration, player, resetHideTimer]);
 
-  const handleSkipBackward = useCallback(async () => {
+  const handleSkipBackward = useCallback(() => {
+    if (!player) return;
     const newTime = Math.max(currentTime - 10, 0);
-    await videoRef.current?.setPositionAsync(newTime * 1000);
-    setCurrentTime(newTime);
+    player.currentTime = newTime;
     resetHideTimer();
-  }, [currentTime, resetHideTimer]);
+  }, [currentTime, player, resetHideTimer]);
 
-  // Seek by tapping on progress bar
-  const handleSeekPress = useCallback(async (event: any) => {
+  const handleSeekPress = useCallback((event: any) => {
+    if (!player || duration <= 0) return;
     const { locationX } = event.nativeEvent;
     const barWidth = Dimensions.get('window').width - Spacing.lg * 2;
     const percent = Math.max(0, Math.min(1, locationX / barWidth));
     const newTime = percent * duration;
-    await videoRef.current?.setPositionAsync(newTime * 1000);
-    setCurrentTime(newTime);
+    player.currentTime = newTime;
     resetHideTimer();
-  }, [duration, resetHideTimer]);
+  }, [duration, player, resetHideTimer]);
 
-  const handleRetry = useCallback(async () => {
-    setError(null);
-    setIsLoading(true);
-    setDebugInfo('');
-
-    // Re-resolve redirects on retry
-    const urlToResolve = decodedUrl;
-    try {
-      const finalUrl = await resolveRedirects(urlToResolve);
-      setResolvedUrl(null); // force re-mount of Video
-      setDebugInfo(`Retry - Original: ${urlToResolve}\nFinal: ${finalUrl}`);
-      setTimeout(() => setResolvedUrl(finalUrl), 100);
-    } catch (e) {
-      setResolvedUrl(null);
-      setDebugInfo(`Retry fallback: ${urlToResolve}`);
-      setTimeout(() => setResolvedUrl(urlToResolve), 100);
+  // PIP Handler
+  const enterPip = useCallback(async () => {
+    if (videoViewRef.current) {
+      try {
+        await videoViewRef.current.startPictureInPicture();
+      } catch (e) {
+        console.warn('[MediaPlayer] PiP indisponível:', e);
+      }
     }
-  }, [decodedUrl]);
+  }, []);
 
   const handleScreenPress = () => {
-    if (showControls) {
-      setShowControls(false);
-    } else {
-      resetHideTimer();
-    }
+    if (showControls) setShowControls(false);
+    else resetHideTimer();
   };
 
-  // Calcular progresso
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
     <View style={styles.container}>
       <StatusBar hidden />
 
-      {/* Video - only render when URL is resolved */}
       <TouchableOpacity
         style={styles.videoContainer}
         activeOpacity={1}
         onPress={handleScreenPress}
       >
         {resolvedUrl ? (
-          <Video
-            ref={videoRef}
-            source={{
-              uri: resolvedUrl,
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-              },
-            }}
+          <VideoView
+            ref={videoViewRef}
+            player={player}
             style={styles.video}
-            resizeMode={ResizeMode.CONTAIN}
-            shouldPlay={true}
-            isLooping={false}
-            useNativeControls={false}
-            onPlaybackStatusUpdate={onPlaybackStatusUpdate}
-            onReadyForDisplay={handleReadyForDisplay}
-            onError={(err: string) => {
-              console.error('[MediaPlayer] Video onError:', err);
-              setDebugInfo(prev => `${prev}\nonError: ${err}`);
-              setError(`Erro no vídeo: ${err}`);
-              setIsLoading(false);
+            contentFit="contain"
+            nativeControls={false}
+            allowsPictureInPicture
+            allowsFullscreen
+            onPictureInPictureStart={() => {
+              setIsPip(true);
+              setShowControls(false);
+            }}
+            onPictureInPictureStop={() => {
+              setIsPip(false);
             }}
           />
         ) : null}
       </TouchableOpacity>
 
-      {/* Loading overlay */}
-      {isLoading && !error && (
+      {/* Loading Overlay */}
+      {isLoading && !error && !isPip && (
         <View style={styles.overlay}>
           <ActivityIndicator size="large" color={Colors.primary} />
           <Text style={styles.loadingText}>
@@ -343,53 +336,55 @@ export default function MediaPlayerScreen() {
         </View>
       )}
 
-      {/* Error overlay */}
-      {error && (
+      {/* Error Overlay */}
+      {error && !isPip && (
         <View style={styles.overlay}>
           <Ionicons name="alert-circle-outline" size={64} color={Colors.error} />
           <Text style={styles.errorText}>{error}</Text>
-
-          {/* Debug info visible on screen */}
           <View style={styles.debugContainer}>
             <Text style={styles.debugTitle}>DEBUG INFO:</Text>
             <Text style={styles.debugText} selectable>ID: {id || '(vazio)'}</Text>
-            <Text style={styles.debugText} selectable>
-              {debugInfo || `URL: ${decodedUrl || '(vazia)'}`}
-            </Text>
+            <Text style={styles.debugText} selectable>{debugInfo}</Text>
           </View>
-
-          <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
+          <TouchableOpacity 
+            style={styles.retryButton} 
+            onPress={() => {
+                setError(null);
+                setResolvedUrl(null); // trigger re-resolve
+            }}
+          >
             <Ionicons name="refresh" size={20} color="#000" />
             <Text style={styles.retryText}>Tentar novamente</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Controls overlay */}
-      {showControls && !error && (
+      {/* Controls Overlay */}
+      {showControls && !error && !isPip && (
         <View style={styles.controls}>
-          {/* Top bar */}
+          {/* Top Bar */}
           <View style={[styles.topBar, { paddingTop: insets.top || 10 }]}>
             <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
               <Ionicons name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
+            
             <Text style={styles.title} numberOfLines={1}>{title || 'Reproduzindo'}</Text>
-            {resolution && (
-              <View style={styles.resolutionBadge}>
-                <Text style={styles.resolutionText}>{resolution}</Text>
-              </View>
-            )}
+
+            <View style={styles.topRightControls}>
+               <CastButton style={{ width: 24, height: 24, tintColor: 'white', marginRight: 16 }} />
+               <TouchableOpacity onPress={enterPip}>
+                  <MaterialIcons name="picture-in-picture-alt" size={24} color="white" />
+               </TouchableOpacity>
+            </View>
           </View>
 
-          {/* Center controls */}
+          {/* Center Controls */}
           <View style={styles.centerControls}>
-            {/* Skip backward */}
             <TouchableOpacity style={styles.skipButton} onPress={handleSkipBackward}>
               <Ionicons name="play-back" size={32} color="white" />
               <Text style={styles.skipText}>10s</Text>
             </TouchableOpacity>
 
-            {/* Play/Pause */}
             <TouchableOpacity style={styles.playButton} onPress={togglePlayPause}>
               <Ionicons
                 name={isPlaying ? 'pause' : 'play'}
@@ -398,23 +393,20 @@ export default function MediaPlayerScreen() {
               />
             </TouchableOpacity>
 
-            {/* Skip forward */}
             <TouchableOpacity style={styles.skipButton} onPress={handleSkipForward}>
               <Ionicons name="play-forward" size={32} color="white" />
               <Text style={styles.skipText}>10s</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Bottom bar with progress */}
+          {/* Bottom Bar */}
           <View style={[styles.bottomBar, { paddingBottom: insets.bottom || 10 }]}>
-            {/* Time display */}
             <View style={styles.timeContainer}>
               <Text style={styles.timeText}>{formatTime(currentTime)}</Text>
               <Text style={styles.timeSeparator}>/</Text>
               <Text style={styles.timeText}>{formatTime(duration)}</Text>
             </View>
 
-            {/* Progress bar (tappable) */}
             <TouchableOpacity
               style={styles.progressBarContainer}
               activeOpacity={0.8}
@@ -425,11 +417,6 @@ export default function MediaPlayerScreen() {
                 <View style={[styles.progressThumb, { left: `${progress}%` }]} />
               </View>
             </TouchableOpacity>
-
-            {/* Progress percentage */}
-            <View style={styles.progressInfo}>
-              <Text style={styles.progressText}>{Math.round(progress)}%</Text>
-            </View>
           </View>
         </View>
       )}
@@ -512,6 +499,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.sm,
   },
+  topRightControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   closeButton: {
     padding: Spacing.sm,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -592,27 +583,5 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     top: -5,
     marginLeft: -8,
-  },
-  progressInfo: {
-    alignItems: 'center',
-    marginTop: Spacing.xs,
-  },
-  progressText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
-  },
-  resolutionBadge: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  resolutionText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
   },
 });
