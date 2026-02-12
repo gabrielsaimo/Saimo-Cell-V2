@@ -15,7 +15,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useChannelStore } from '../../stores/channelStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { initEPGService, prefetchEPG, getEPGStats, hasEPGMapping } from '../../services/epgService';
+import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache } from '../../services/epgService';
 import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
@@ -59,49 +59,60 @@ export default function HomeScreen() {
     );
   }, [allChannels, searchQuery]);
 
-  // Prefetch EPG em background para TODOS os canais com mapeamento
-  // IMPORTANTE: não bloqueia UI - usa InteractionManager + yields entre batches
+  // Prefetch EPG em background — UM canal por vez + yield entre cada um.
+  // Nunca bloqueia navegação nem interações do usuário.
   useEffect(() => {
-    if (channels.length > 0 && !prefetchedRef.current) {
-      prefetchedRef.current = true;
+    if (channels.length === 0 || prefetchedRef.current) return;
+    prefetchedRef.current = true;
 
-      const channelIds = channels.filter(c => hasEPGMapping(c.id)).map(c => c.id);
-      if (channelIds.length === 0) return;
+    // Filtra apenas canais sem cache fresco em memória
+    const channelIds = channels
+      .filter(c => hasEPGMapping(c.id) && !hasFreshCache(c.id))
+      .map(c => c.id);
 
-      let cancelled = false;
+    // Nada a carregar (tudo em cache) — não mostra barra de progresso
+    if (channelIds.length === 0) return;
 
-      // Aguarda interações do usuário terminarem antes de começar
-      const task = InteractionManager.runAfterInteractions(() => {
-        if (cancelled) return;
-        setIsLoadingEPG(true);
-        const total = channelIds.length;
-        let loaded = 0;
-        setEpgProgress({ loaded: 0, total });
+    let cancelled = false;
 
-        const loadAll = async () => {
-          for (let i = 0; i < channelIds.length; i += 3) {
-            if (cancelled) return;
-            const batch = channelIds.slice(i, i + 3);
-            await prefetchEPG(batch);
-            loaded += batch.length;
-            // Atualiza progresso a cada 2 batches para reduzir re-renders
-            if (loaded % 6 === 0 || loaded >= total) {
-              setEpgProgress({ loaded: Math.min(loaded, total), total });
-            }
-            // Yield ao UI thread - garante que toques são processados
-            await new Promise(resolve => setTimeout(resolve, 50));
+    // Aguarda animações/interações terminarem antes de iniciar
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+
+      const total = channelIds.length;
+      let loaded = 0;
+      setIsLoadingEPG(true);
+      setEpgProgress({ loaded: 0, total });
+
+      const loadAll = async () => {
+        for (const channelId of channelIds) {
+          if (cancelled) return;
+
+          // Busca UM canal — se já estiver em cache (disco), retorna rápido
+          await fetchChannelEPG(channelId).catch(() => {});
+          loaded++;
+
+          // Atualiza progresso a cada 5 canais para reduzir re-renders
+          if (loaded % 5 === 0 || loaded >= total) {
+            setEpgProgress({ loaded, total });
           }
-          if (!cancelled) setIsLoadingEPG(false);
-        };
 
-        loadAll();
-      });
-
-      return () => {
-        cancelled = true;
-        task.cancel();
+          // Yield obrigatório após cada canal — JS thread livre para toques/navegação
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+        }
+        if (!cancelled) {
+          setEpgProgress({ loaded: total, total });
+          setIsLoadingEPG(false);
+        }
       };
-    }
+
+      loadAll();
+    });
+
+    return () => {
+      cancelled = true;
+      task.cancel();
+    };
   }, [channels]);
 
   const handleSelectCategory = useCallback((category: string) => {
@@ -113,7 +124,6 @@ export default function HomeScreen() {
     setCategory(category as any);
     setSearchQuery('');
     setShowSearch(false);
-    prefetchedRef.current = false; // Reset para nova categoria
   }, [adultUnlocked, setCategory]);
 
   const handlePinSuccess = useCallback(() => {

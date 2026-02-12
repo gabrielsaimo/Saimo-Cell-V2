@@ -3,7 +3,7 @@
 import type { MediaItem } from '../types';
 import { Paths, File as FSFile, Directory } from 'expo-file-system';
 
-const GITHUB_BASE = 'https://raw.githubusercontent.com/gabrielsaimo/free-tv/main/public/data/enriched/';
+const GITHUB_BASE = 'https://github.com/gabrielsaimo/Saimo-TV/tree/main/public/data/enriched';
 
 // Cache em memória por página: "categoryId-pN" → items
 const PAGE_CACHE = new Map<string, MediaItem[]>();
