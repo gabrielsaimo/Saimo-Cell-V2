@@ -60,16 +60,16 @@ export default function SettingsScreen() {
 
   const handleClearCache = useCallback(async () => {
     Alert.alert(
-      'Limpar Cache',
-      'Deseja limpar o cache de EPG?',
+      'Recarregar Guia',
+      'Deseja recarregar o Guia de TV (EPG)? Isso baixará os dados mais recentes.',
       [
         { text: 'Cancelar', style: 'cancel' },
         { 
-          text: 'Limpar', 
-          style: 'destructive',
+          text: 'Recarregar', 
+          style: 'default',
           onPress: async () => {
             await clearEPGCache();
-            Alert.alert('Sucesso', 'Cache limpo com sucesso!');
+            Alert.alert('Sucesso', 'Guia de TV recarregado. Os dados aparecerão em breve.');
           }
         },
       ]
@@ -216,8 +216,8 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <TouchableOpacity style={styles.settingRow} onPress={handleClearCache}>
             <View style={styles.settingInfo}>
-              <Ionicons name="trash-outline" size={22} color={Colors.warning} />
-              <Text style={styles.settingLabel}>Limpar cache EPG</Text>
+              <Ionicons name="refresh-outline" size={22} color={Colors.primary} />
+              <Text style={styles.settingLabel}>Recarregar Guia de TV</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
           </TouchableOpacity>

@@ -19,6 +19,7 @@ import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache } from '.
 import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
+import EPGConsentModal from '../../components/EPGConsentModal';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -28,6 +29,10 @@ export default function HomeScreen() {
   const [showSearch, setShowSearch] = useState(false);
   const [epgProgress, setEpgProgress] = useState({ loaded: 0, total: 0 });
   const [isLoadingEPG, setIsLoadingEPG] = useState(false);
+  
+  // EPG Consent State
+  const [showEPGConsent, setShowEPGConsent] = useState(true);
+  const [allowEPGLoading, setAllowEPGLoading] = useState(false);
   
   const prefetchedRef = useRef(false);
   
@@ -62,6 +67,7 @@ export default function HomeScreen() {
   // Prefetch EPG em background — UM canal por vez + yield entre cada um.
   // Nunca bloqueia navegação nem interações do usuário.
   useEffect(() => {
+    if (!allowEPGLoading) return;
     if (channels.length === 0 || prefetchedRef.current) return;
     prefetchedRef.current = true;
 
@@ -113,7 +119,7 @@ export default function HomeScreen() {
       cancelled = true;
       task.cancel();
     };
-  }, [channels]);
+  }, [channels, allowEPGLoading]);
 
   const handleSelectCategory = useCallback((category: string) => {
     if (category === 'Adulto' && !adultUnlocked) {
@@ -137,6 +143,16 @@ export default function HomeScreen() {
   const handlePinClose = useCallback(() => {
     setPinModalVisible(false);
     setPendingCategory(null);
+  }, []);
+
+  const handleEPGAccept = useCallback(() => {
+    setAllowEPGLoading(true);
+    setShowEPGConsent(false);
+  }, []);
+
+  const handleEPGDecline = useCallback(() => {
+    setAllowEPGLoading(false);
+    setShowEPGConsent(false);
   }, []);
 
   const toggleSearch = useCallback(() => {
@@ -225,6 +241,12 @@ export default function HomeScreen() {
         onClose={handlePinClose}
         onSuccess={handlePinSuccess}
         mode="verify"
+      />
+
+      <EPGConsentModal
+        visible={showEPGConsent}
+        onAccept={handleEPGAccept}
+        onDecline={handleEPGDecline}
       />
     </View>
   );

@@ -12,6 +12,21 @@ import {
 // Re-exportar categorias do streamingService
 export const MEDIA_CATEGORIES = CATEGORIES;
 
+// Utility: Duplicatas por NOME exato (case-insensitive)
+export function deduplicateByName(items: MediaItem[]): MediaItem[] {
+    const seen = new Set<string>();
+    const unique: MediaItem[] = [];
+
+    for (const item of items) {
+        const name = (item.tmdb?.title || item.name).trim().toLowerCase();
+        if (!seen.has(name)) {
+            seen.add(name);
+            unique.push(item);
+        }
+    }
+    return unique;
+}
+
 // Carregar preview (p1) de uma categoria
 export async function loadCategory(categoryId: string): Promise<MediaItem[]> {
     const existing = getCategoryItems(categoryId);
@@ -34,17 +49,20 @@ export async function loadMoreForCategory(categoryId: string): Promise<{
 
 // Buscar mídia por nome (nos dados carregados em memória)
 export function searchMedia(query: string, items?: MediaItem[]): MediaItem[] {
+    let results: MediaItem[] = [];
     // Se items fornecido, busca neles
     if (items && items.length > 0) {
         const normalized = query.toLowerCase().trim();
-        if (!normalized) return items;
-        return items.filter(item => {
+        if (!normalized) return deduplicateByName(items);
+        results = items.filter(item => {
             const title = item.tmdb?.title || item.name;
             return title.toLowerCase().includes(normalized);
         });
+    } else {
+        // Senão, busca em todo o cache
+        results = searchInLoadedData(query);
     }
-    // Senão, busca em todo o cache
-    return searchInLoadedData(query);
+    return deduplicateByName(results);
 }
 
 // Filtrar mídia
@@ -103,9 +121,50 @@ export function getAllYears(items: MediaItem[]): string[] {
 
 // Buscar filmes/séries por ator
 export function getMediaByActor(actorId: number, items: MediaItem[]): MediaItem[] {
-    return items.filter(item =>
+    return deduplicateByName(items.filter(item =>
         item.tmdb?.cast?.some((c: any) => c.id === actorId)
-    );
+    ));
+}
+
+// Filtrar recomendações válidas (que existem no catálogo ou têm URL)
+export async function getValidRecommendations(items: MediaItem[], limit?: number): Promise<MediaItem[]> {
+    if (!items || items.length === 0) return [];
+
+    const validItems: MediaItem[] = [];
+    const maxItems = limit || 50; // Default limit if not provided
+
+    for (const item of items) {
+        if (validItems.length >= maxItems) break;
+
+        // 1. Se já tem URL, é válido (Loaded)
+        if (item.url && item.url.length > 5) {
+            validItems.push(item);
+            continue;
+        }
+
+        // 2. Tentar encontrar pelo ID nos dados carregados (Loaded)
+        const found = await getMediaById(item.id);
+        if (found) {
+            validItems.push(found); // Usa o item completo encontrado
+            continue;
+        }
+
+        // 3. Tentar busca por nome (Loaded)
+        const searchResults = searchMedia(item.tmdb?.title || item.name);
+        if (searchResults.length > 0) {
+            // Pega o primeiro match exato ou próximo
+            validItems.push(searchResults[0]);
+            continue;
+        }
+
+        // 4. Se não achou no catálogo, mas tem dados básicos (Partial)
+        // Permite exibir como recomendação "visual", mesmo que não clicável para assistir agora
+        if (item.tmdb?.poster && (item.tmdb?.title || item.name)) {
+            validItems.push(item);
+        }
+    }
+
+    return deduplicateByName(validItems);
 }
 
 // Buscar item por ID (nos dados carregados)

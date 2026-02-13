@@ -3,7 +3,10 @@
 import type { MediaItem } from '../types';
 import { Paths, File as FSFile, Directory } from 'expo-file-system';
 
-const GITHUB_BASE = 'https://github.com/gabrielsaimo/Saimo-TV/tree/main/public/data/enriched';
+// CRITICAL: DO NOT CHANGE THIS URL. It must be 'raw.githubusercontent.com' to get JSON data.
+// 'github.com/tree' returns an HTML page which breaks the app.
+const GITHUB_BASE = 'https://raw.githubusercontent.com/gabrielsaimo/Saimo-TV/main/public/data/enriched/';
+
 
 // Cache em memória por página: "categoryId-pN" → items
 const PAGE_CACHE = new Map<string, MediaItem[]>();
@@ -89,7 +92,11 @@ function diskLoad(key: string): MediaItem[] | null {
  * Restores the full catalog if it was previously cached.
  * Returns true if any data was restored.
  */
-export function hydrateFromDisk(): boolean {
+/**
+ * Hydrate ALL pages from disk for instant startup display.
+ * RESTORES asynchronously in chunks to avoid blocking the UI thread.
+ */
+export async function hydrateFromDisk(): Promise<boolean> {
     if (!ensureDisk()) {
         console.warn('[DiskCache] Hydration skipped — disk unavailable');
         return false;
@@ -99,38 +106,49 @@ export function hydrateFromDisk(): boolean {
     let count = 0;
     let totalItems = 0;
 
-    for (const cat of CATEGORIES) {
-        // Restore ALL pages for this category (p1, p2, p3, ...)
-        let page = 1;
-        let catItems: MediaItem[] = [];
+    // Process categories in chunks to yield to UI thread
+    const CHUNK_SIZE = 5;
 
-        while (true) {
-            const key = `${cat.id}-p${page}`;
-            if (PAGE_CACHE.has(key)) {
-                // Already in memory, still count it
-                catItems.push(...(PAGE_CACHE.get(key) || []));
-                page++;
-                continue;
-            }
+    for (let i = 0; i < CATEGORIES.length; i += CHUNK_SIZE) {
+        const batch = CATEGORIES.slice(i, i + CHUNK_SIZE);
 
-            const items = diskLoad(key);
-            if (!items || items.length === 0) break;
+        await new Promise<void>(resolve => {
+            // Immediate execution in next frame
+            setTimeout(() => {
+                for (const cat of batch) {
+                    // Restore ALL pages for this category
+                    let page = 1;
+                    let catItems: MediaItem[] = [];
 
-            PAGE_CACHE.set(key, items);
-            catItems.push(...items);
-            restored = true;
-            page++;
-        }
+                    while (true) {
+                        const key = `${cat.id}-p${page}`;
+                        if (PAGE_CACHE.has(key)) {
+                            catItems.push(...(PAGE_CACHE.get(key) || []));
+                            page++;
+                            continue;
+                        }
 
-        if (catItems.length > 0) {
-            CATEGORY_CACHE.set(cat.id, deduplicateItems(catItems));
-            LAST_PAGE.set(cat.id, page - 1);
-            // If last page had full 50 items, there might be more
-            const lastPageItems = PAGE_CACHE.get(`${cat.id}-p${page - 1}`);
-            HAS_MORE.set(cat.id, lastPageItems ? lastPageItems.length >= 50 : false);
-            count++;
-            totalItems += catItems.length;
-        }
+                        const items = diskLoad(key);
+                        if (!items || items.length === 0) break;
+
+                        PAGE_CACHE.set(key, items);
+                        catItems.push(...items);
+                        restored = true;
+                        page++;
+                    }
+
+                    if (catItems.length > 0) {
+                        CATEGORY_CACHE.set(cat.id, deduplicateItems(catItems));
+                        LAST_PAGE.set(cat.id, page - 1);
+                        const lastPageItems = PAGE_CACHE.get(`${cat.id}-p${page - 1}`);
+                        HAS_MORE.set(cat.id, lastPageItems ? lastPageItems.length >= 50 : false);
+                        count++;
+                        totalItems += catItems.length;
+                    }
+                }
+                resolve();
+            }, 0);
+        });
     }
 
     console.log(`[DiskCache] Hydration complete: ${count} categories, ${totalItems} items restored`);
@@ -583,6 +601,11 @@ function createMediaItem(obj: any, index: number): MediaItem {
             backdropHD: obj.tmdb.backdropHD,
             logo: obj.tmdb.logo,
             cast: obj.tmdb.cast || [],
+            // Novos campos
+            recommendations: obj.tmdb.recommendations ? obj.tmdb.recommendations.map((rec: any, idx: number) => createMediaItem(rec, idx)) : [],
+            director: obj.tmdb.director,
+            writer: obj.tmdb.writer,
+            productionCompany: obj.tmdb.productionCompany,
         } : undefined,
     };
 }

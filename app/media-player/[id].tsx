@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as NavigationBar from 'expo-navigation-bar';
 import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
@@ -206,11 +207,35 @@ export default function MediaPlayerScreen() {
     };
   }, [player]);
 
-  // Force Landscape
+  // Force Landscape & Hide Navigation Bar
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    async function enterFullScreen() {
+      try {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        if (Platform.OS === 'android') {
+          await NavigationBar.setPositionAsync('absolute');
+          await NavigationBar.setBackgroundColorAsync('#00000000');
+          await NavigationBar.setVisibilityAsync('hidden');
+          await NavigationBar.setBehaviorAsync('overlay-swipe');
+        }
+      } catch (e) {
+        console.warn('Error entering full screen:', e);
+      }
+    }
+    enterFullScreen();
+
     return () => {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      async function exitFullScreen() {
+        try {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          if (Platform.OS === 'android') {
+            await NavigationBar.setVisibilityAsync('visible');
+          }
+        } catch (e) {
+          console.warn('Error exiting full screen:', e);
+        }
+      }
+      exitFullScreen();
     };
   }, []);
 

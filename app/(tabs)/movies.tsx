@@ -8,9 +8,10 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  FlatList,
   InteractionManager,
+  Dimensions,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -20,6 +21,7 @@ import {
   filterMedia,
   sortMedia,
   getAllGenres,
+  deduplicateByName,
 } from '../../services/mediaService';
 import {
   CATEGORIES,
@@ -57,6 +59,21 @@ type CategoryRowData = {
   name: string;
   items: MediaItem[];
 };
+
+const { width } = Dimensions.get('window');
+// Cálculos de altura para getItemLayout
+// MediaRow: 
+// - Header (Text + seeAll): ~36px (approx font + padding)
+// - List: width * 0.35 * 1.5 (Card Height)
+// - MarginBottom: 20 (Spacing.xl)
+// Total estimada: 36 + (width * 0.35 * 1.5) + 20
+const CARD_WIDTH = width * 0.35;
+const CARD_HEIGHT = CARD_WIDTH * 1.5;
+const ROW_HEIGHT = 36 + CARD_HEIGHT + 20;
+
+// Grid Item Height:
+// width / 3 * 1.5 + margin
+const GRID_ITEM_HEIGHT = (width / 3) * 1.5 + Spacing.sm;
 
 export default function MoviesScreen() {
   const insets = useSafeAreaInsets();
@@ -226,8 +243,10 @@ export default function MoviesScreen() {
 
   const loadCatalog = async (isRefresh: boolean) => {
     // Na primeira abertura, restaurar cache do disco (instantâneo)
+    // Na primeira abertura, restaurar cache do disco (agora async para não congelar)
     if (!isRefresh && !catalogLoadedRef.current) {
-      const hydrated = hydrateFromDisk();
+      setLoading(true); // Garante spinner enquanto hidrata
+      const hydrated = await hydrateFromDisk();
       console.log('[Movies] Hydration result:', hydrated);
     }
 
@@ -358,7 +377,7 @@ export default function MoviesScreen() {
         items[idx++] = catItems[i];
       }
     });
-    return items;
+    return deduplicateByName(items);
   }, [categories]);
 
   // Gêneros disponíveis
@@ -553,27 +572,32 @@ export default function MoviesScreen() {
 
       {/* Content - Virtualized Lists (key prop forces unmount/remount on view switch) */}
       {showGrid ? (
-        // Grid view - FlatList virtualizado com colunas
-        <FlatList
+        // Grid view - FlashList virtualizado com colunas
+        <FlashList
           key="grid-view"
           data={gridData}
           keyExtractor={keyExtractorGrid}
           numColumns={3}
           renderItem={renderGridItem}
           contentContainerStyle={[styles.gridContainer, { paddingBottom: insets.bottom + 80 }]}
-          columnWrapperStyle={styles.gridRow}
+          // columnWrapperStyle not supported in FlashList? FlashList handles numColumns differently but might not support columnWrapperStyle directly.
+          // FlashList doesn't support columnWrapperStyle. We need to check if we can remove it or if we need a workaround.
+          // Actually FlashList handles layout inside. We should check if we really need columnWrapperStyle for gap. 
+          // FlashList doesn't support columnWrapperStyle. We can use ItemSeparatorComponent or padding in the item.
+          // For now I will remove columnWrapperStyle and see.
           showsVerticalScrollIndicator={false}
           refreshControl={refreshControl}
           ListHeaderComponent={GridHeader}
           ListFooterComponent={ListFooter}
-          initialNumToRender={15}
-          maxToRenderPerBatch={12}
-          windowSize={5}
-          removeClippedSubviews
+          estimatedItemSize={GRID_ITEM_HEIGHT}
+          initialNumToRender={12}
+          // maxToRenderPerBatch not used in FlashList
+          // windowSize not used in FlashList
+          // removeClippedSubviews handled by FlashList
         />
       ) : (
-        // Category rows view - FlatList virtualizado
-        <FlatList
+        // Category rows view - FlashList virtualizado
+        <FlashList
           key="category-view"
           data={categoryData}
           keyExtractor={keyExtractorCategory}
@@ -582,10 +606,11 @@ export default function MoviesScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={refreshControl}
           ListFooterComponent={ListFooter}
-          initialNumToRender={4}
-          maxToRenderPerBatch={3}
-          windowSize={5}
-          removeClippedSubviews
+          estimatedItemSize={ROW_HEIGHT}
+          initialNumToRender={2}
+          // maxToRenderPerBatch removed
+          // windowSize removed
+          // getItemLayout removed (estimatedItemSize is enough)
         />
       )}
     </View>

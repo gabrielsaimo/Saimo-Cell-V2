@@ -70,7 +70,16 @@ const MediaCard = memo(({ item, size = 'medium' }: MediaCardProps) => {
       // Filme ou conteúdo simples -> tela de mídia
       router.push({
         pathname: '/media/[id]',
-        params: { id: item.id }
+        params: { 
+            id: item.id,
+            title: item.tmdb?.title || item.name,
+            poster: item.tmdb?.poster,
+            backdrop: item.tmdb?.backdrop,
+            overview: item.tmdb?.overview,
+            year: item.tmdb?.year,
+            rating: item.tmdb?.rating?.toString(),
+            genres: item.tmdb?.genres?.join(','),
+        }
       });
     }
   }, [item.id, router, hasSeries]);
@@ -98,6 +107,7 @@ const MediaCard = memo(({ item, size = 'medium' }: MediaCardProps) => {
         contentFit="cover"
         transition={200}
         cachePolicy="memory-disk"
+        recyclingKey={tmdb?.poster || item.url}
       />
       
       {/* Gradient overlay */}
@@ -116,9 +126,9 @@ const MediaCard = memo(({ item, size = 'medium' }: MediaCardProps) => {
       
       {/* Certification Badge */}
       {tmdb?.certification && (
-        <View style={[styles.certBadge, { borderColor: getCertificationColor(tmdb.certification) }]}>
-          <Text style={[styles.certText, { color: getCertificationColor(tmdb.certification) }]}>
-            {tmdb.certification}
+        <View style={[styles.certBadge, { borderColor: getCertificationColor(tmdb?.certification) }]}>
+          <Text style={[styles.certText, { color: getCertificationColor(tmdb?.certification) }]}>
+            {tmdb?.certification}
           </Text>
         </View>
       )}

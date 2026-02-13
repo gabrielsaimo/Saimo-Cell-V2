@@ -104,6 +104,11 @@ export interface TMDBData {
     backdropHD?: string;
     logo?: string;
     cast: CastMember[];
+    // Novos campos
+    recommendations?: MediaItem[];
+    director?: string;
+    writer?: string;
+    productionCompany?: string;
 }
 
 // ===== SERIES TYPES (antes de MediaItem para evitar erro de referência) =====

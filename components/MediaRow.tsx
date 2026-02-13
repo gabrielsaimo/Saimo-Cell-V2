@@ -3,9 +3,10 @@ import {
   View, 
   Text, 
   StyleSheet, 
-  FlatList,
   TouchableOpacity,
+  Dimensions,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
@@ -15,10 +16,14 @@ import MediaCard from './MediaCard';
 
 interface MediaRowProps {
   title: string;
-  categoryId: string;
+  categoryId?: string;
   items: MediaItem[];
   onSeeAll?: () => void;
 }
+
+const { width } = Dimensions.get('window');
+const CARD_WIDTH = width * 0.35; // Size medium
+const CARD_HEIGHT = CARD_WIDTH * 1.5;
 
 const MediaRow = memo(({ title, categoryId, items, onSeeAll }: MediaRowProps) => {
   const router = useRouter();
@@ -28,7 +33,7 @@ const MediaRow = memo(({ title, categoryId, items, onSeeAll }: MediaRowProps) =>
   const handleSeeAll = () => {
     if (onSeeAll) {
       onSeeAll();
-    } else {
+    } else if (categoryId) {
       router.push({
         pathname: '/category/[id]' as any,
         params: { id: categoryId, name: title }
@@ -41,25 +46,29 @@ const MediaRow = memo(({ title, categoryId, items, onSeeAll }: MediaRowProps) =>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>{title}</Text>
-        <TouchableOpacity style={styles.seeAllButton} onPress={handleSeeAll}>
-          <Text style={styles.seeAllText}>Ver tudo</Text>
-          <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
-        </TouchableOpacity>
+        {(categoryId || onSeeAll) && (
+          <TouchableOpacity style={styles.seeAllButton} onPress={handleSeeAll}>
+            <Text style={styles.seeAllText}>Ver tudo</Text>
+            <Ionicons name="chevron-forward" size={16} color={Colors.primary} />
+          </TouchableOpacity>
+        )}
       </View>
       
       {/* Horizontal List */}
-      <FlatList
+      <FlashList
+        horizontal
         data={items}
         keyExtractor={(item) => item.id}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.list}
         renderItem={({ item }) => (
           <MediaCard item={item} size="medium" />
         )}
+        estimatedItemSize={CARD_WIDTH + Spacing.sm}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: Spacing.lg }}
         initialNumToRender={5}
         maxToRenderPerBatch={5}
-        windowSize={3}
+        windowSize={5}
+
         removeClippedSubviews
       />
     </View>

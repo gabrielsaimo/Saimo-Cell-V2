@@ -46,16 +46,52 @@ export default function MediaDetailScreen() {
   const { isFavorite, addFavorite, removeFavorite, addToHistory } = useMediaStore();
   const [favorite, setFavorite] = useState(false);
 
+  const params = useLocalSearchParams();
+
   useEffect(() => {
+    let isMounted = true;
+
     async function load() {
       if (!id) return;
-      const item = await getMediaById(id);
-      setMedia(item);
-      setFavorite(isFavorite(id));
-      setLoading(false);
+      setLoading(true);
+      
+      let item = await getMediaById(id);
+
+      // Fallback: Construct partial item from params if not found in catalog
+      if (!item && params.title) {
+        item = {
+            id: id,
+            name: params.title as string,
+            url: '', // No URL available yet
+            category: '',
+            isAdult: false,
+            type: 'movie',
+            tmdb: {
+                id: 0,
+                title: params.title as string,
+                poster: params.poster as string,
+                backdrop: params.backdrop as string,
+                overview: params.overview as string,
+                year: params.year as string,
+                rating: params.rating ? parseFloat(params.rating as string) : 0,
+                genres: params.genres ? (params.genres as string).split(',') : [],
+                cast: [],
+            }
+        };
+      }
+
+      if (isMounted) {
+        setMedia(item);
+        setFavorite(isFavorite(id));
+        setLoading(false); // Show content immediately
+      }
     }
     load();
-  }, [id, isFavorite]);
+
+    return () => {
+        isMounted = false;
+    };
+  }, [id, isFavorite, params]);
 
   const handleBack = useCallback(() => {
     router.back();
@@ -198,9 +234,15 @@ export default function MediaDetailScreen() {
         
         {/* Action Buttons */}
         <View style={styles.actions}>
-          <TouchableOpacity style={styles.playButton} onPress={handlePlay}>
-            <Ionicons name="play" size={24} color="#000" />
-            <Text style={styles.playText}>Assistir</Text>
+          <TouchableOpacity 
+            style={[styles.playButton, !media.url && styles.playButtonDisabled]} 
+            onPress={handlePlay}
+            disabled={!media.url}
+          >
+            <Ionicons name={media.url ? "play" : "alert-circle"} size={24} color={media.url ? "#000" : Colors.textSecondary} />
+            <Text style={[styles.playText, !media.url && styles.playTextDisabled]}>
+                {media.url ? 'Assistir' : 'Indisponível'}
+            </Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -231,6 +273,25 @@ export default function MediaDetailScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Sinopse</Text>
             <Text style={styles.overview}>{tmdb.overview}</Text>
+            
+            {/* Extra Info */}
+            <View style={styles.metaInfo}>
+              {tmdb.director && (
+                <Text style={styles.metaText}>
+                  <Text style={styles.metaLabel}>Direção: </Text>{tmdb.director}
+                </Text>
+              )}
+              {tmdb.writer && (
+                <Text style={styles.metaText}>
+                  <Text style={styles.metaLabel}>Roteiro: </Text>{tmdb.writer}
+                </Text>
+              )}
+              {tmdb.productionCompany && (
+                <Text style={styles.metaText}>
+                  <Text style={styles.metaLabel}>Produção: </Text>{tmdb.productionCompany}
+                </Text>
+              )}
+            </View>
           </View>
         )}
         
@@ -262,6 +323,8 @@ export default function MediaDetailScreen() {
             />
           </View>
         )}
+
+
         
         {/* Bottom padding */}
         <View style={{ height: insets.bottom + 40 }} />
@@ -458,6 +521,25 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#000',
+    fontWeight: '600',
+  },
+  metaInfo: {
+    marginTop: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    gap: 4,
+  },
+  metaText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+  },
+  playButtonDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  playTextDisabled: {
+    color: Colors.textSecondary,
+  },
+  metaLabel: {
+    color: Colors.text,
     fontWeight: '600',
   },
 });
