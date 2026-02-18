@@ -34,6 +34,7 @@ export default function SeriesDetailScreen() {
   
   const { isFavorite, addFavorite, removeFavorite, getSeriesProgress, setSeriesProgress } = useMediaStore();
   const [favorite, setFavorite] = useState(false);
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
 
   // Carregar série
   useEffect(() => {
@@ -228,7 +229,28 @@ export default function SeriesDetailScreen() {
         {tmdb?.overview && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Sinopse</Text>
-            <Text style={styles.overview}>{tmdb.overview}</Text>
+            <Text
+              style={styles.overview}
+              numberOfLines={overviewExpanded ? undefined : 3}
+            >
+              {tmdb.overview}
+            </Text>
+            {tmdb.overview.length > 150 && (
+              <TouchableOpacity
+                onPress={() => setOverviewExpanded(v => !v)}
+                style={styles.seeMoreBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.seeMoreText}>
+                  {overviewExpanded ? 'Ver menos' : 'Ver mais'}
+                </Text>
+                <Ionicons
+                  name={overviewExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={Colors.primary}
+                />
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -461,6 +483,17 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.body.fontSize,
     lineHeight: 22,
+  },
+  seeMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: Spacing.xs,
+  },
+  seeMoreText: {
+    color: Colors.primary,
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
   },
   seasonsRow: {
     gap: Spacing.sm,

@@ -21,6 +21,13 @@ import MediaCard from '../../components/MediaCard';
 
 const { width } = Dimensions.get('window');
 
+const COLUMNS = 3;
+const GRID_GAP = Spacing.sm;
+// Card width: fits 3 cards per row accounting for section padding + gap + MediaCard marginRight
+const FILM_CARD_WIDTH = Math.floor(
+  (width - Spacing.lg * 2 - GRID_GAP * (COLUMNS - 1) - Spacing.sm * COLUMNS) / COLUMNS
+);
+
 export default function ActorScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
   const router = useRouter();
@@ -106,7 +113,7 @@ export default function ActorScreen() {
           <Text style={styles.sectionTitle}>Filmografia</Text>
           <View style={styles.grid}>
             {filmography.map((item) => (
-              <MediaCard key={item.id} item={item} size="small" />
+              <MediaCard key={item.id} item={item} cardWidth={FILM_CARD_WIDTH} />
             ))}
           </View>
         </View>

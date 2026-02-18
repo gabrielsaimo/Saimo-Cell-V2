@@ -1,5 +1,6 @@
 // EPG Service - Cache em memória + disco (7 dias de TTL)
 // Nunca bloqueia a UI: parsing cede o JS thread entre canais
+// Per-file disk cache via expo-file-system v19 (sync API)
 
 import type { Program, CurrentProgram } from '../types';
 import { getEPGUrl, usesGuiaDeTV } from '../data/epgMappings';
@@ -9,6 +10,7 @@ import { Paths, File as FSFile, Directory } from 'expo-file-system';
 
 const FETCH_TIMEOUT = 15000;
 const CACHE_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
+const MEM_RETENTION_MS = 24 * 60 * 60 * 1000; // 24h em memória (economiza RAM)
 
 // Proxies CORS com fallback automático
 const CORS_PROXIES = [
@@ -28,7 +30,7 @@ let currentProxyIndex = 0;
 type EPGListener = (channelId: string, programs: Program[]) => void;
 const listeners = new Set<EPGListener>();
 
-// ===== CACHE EM DISCO (expo-file-system v19) =====
+// ===== CACHE EM DISCO (expo-file-system v19 — sync per-file) =====
 
 let _epgDir: Directory | null = null;
 let _diskReady = false;
@@ -73,6 +75,7 @@ function safeKey(channelId: string): string {
     return channelId.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+/** Save per-channel EPG to individual file (sync — no async overhead) */
 function diskSave(channelId: string, programs: Program[], fetchTime: number): void {
     try {
         if (!ensureDisk()) return;
@@ -96,6 +99,7 @@ function diskSave(channelId: string, programs: Program[], fetchTime: number): vo
     }
 }
 
+/** Load per-channel EPG from individual file (sync — instant read) */
 function diskLoad(channelId: string): { programs: Program[], fetchTime: number } | null {
     try {
         if (!ensureDisk()) return null;
@@ -148,7 +152,7 @@ async function fetchWithTimeout(url: string, timeout: number): Promise<Response>
     }
 }
 
-// Yield para o JS thread — garante que toques e navegação são processados
+/** Yield para o JS thread — garante que toques e navegação são processados */
 function yieldToUI(): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, 0));
 }
@@ -303,8 +307,9 @@ async function fetchWithProxyFallback(
 // ===== API PÚBLICA =====
 
 export async function initEPGService(): Promise<void> {
-    // Garante que o diretório de cache existe
+    // Garante que o diretório de cache existe (não carrega tudo — lazy per-channel)
     ensureDisk();
+    console.log('EPG Service initialized (lazy per-channel cache)');
 }
 
 export async function fetchChannelEPG(channelId: string): Promise<Program[]> {
@@ -321,17 +326,19 @@ export async function fetchChannelEPG(channelId: string): Promise<Program[]> {
         }
     }
 
-    // 2. Verifica cache em disco (sem fetch de rede)
+    // 2. Verifica cache em disco (sem fetch de rede) — lazy load per-channel
     if (!cached || cached.length === 0) {
         const disk = diskLoad(channelId);
         if (disk) {
             const nowDate = new Date();
             const futurePrograms = disk.programs.filter(p => p.endTime > nowDate);
             if (futurePrograms.length >= 3) {
-                // Carrega disco → memória
-                memoryCache.set(channelId, disk.programs);
+                // Carrega disco → memória (apenas 24h)
+                const tomorrow = new Date(now + MEM_RETENTION_MS);
+                const memPrograms = disk.programs.filter(p => p.startTime < tomorrow);
+                memoryCache.set(channelId, memPrograms);
                 lastFetch.set(channelId, disk.fetchTime);
-                return disk.programs;
+                return memPrograms;
             }
         }
     }
@@ -367,8 +374,8 @@ export async function fetchChannelEPG(channelId: string): Promise<Program[]> {
             const diskPrograms = programs.filter(p => p.startTime < sevenDaysFromNow);
             diskSave(channelId, diskPrograms, now);
 
-            // Memória: mantém apenas próximas 24 horas
-            const tomorrow = new Date(now + 24 * 60 * 60 * 1000);
+            // Memória: mantém apenas próximas 24 horas (economiza RAM em TV box)
+            const tomorrow = new Date(now + MEM_RETENTION_MS);
             const memPrograms = programs.filter(p => p.startTime < tomorrow);
 
             memoryCache.set(channelId, memPrograms);
@@ -434,6 +441,30 @@ export function hasFreshCache(channelId: string): boolean {
     const nowDate = new Date();
     const futurePrograms = cached.filter(p => p.endTime > nowDate);
     return (Date.now() - fetchTime) < CACHE_DURATION_MS && futurePrograms.length >= 3;
+}
+
+/** Verifica se canal tem cache válido em disco (sem carregar para memória) */
+export function hasDiskCache(channelId: string): boolean {
+    const disk = diskLoad(channelId);
+    if (!disk) return false;
+    const nowDate = new Date();
+    return disk.programs.some(p => p.endTime > nowDate);
+}
+
+/** Carrega EPG do disco para memória (sem fetch de rede). Retorna true se carregado. */
+export function loadFromDiskCache(channelId: string): boolean {
+    const disk = diskLoad(channelId);
+    if (!disk) return false;
+    const nowDate = new Date();
+    const futurePrograms = disk.programs.filter(p => p.endTime > nowDate);
+    if (futurePrograms.length === 0) return false;
+    const now = Date.now();
+    const tomorrow = new Date(now + MEM_RETENTION_MS);
+    const memPrograms = disk.programs.filter(p => p.startTime < tomorrow);
+    memoryCache.set(channelId, memPrograms);
+    lastFetch.set(channelId, disk.fetchTime);
+    listeners.forEach(l => l(channelId, memPrograms));
+    return true;
 }
 
 export async function clearEPGCache(): Promise<void> {

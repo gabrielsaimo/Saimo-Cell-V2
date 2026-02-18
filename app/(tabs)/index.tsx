@@ -15,11 +15,13 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useChannelStore } from '../../stores/channelStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache } from '../../services/epgService';
+import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache, loadFromDiskCache } from '../../services/epgService';
+import { getAllChannels } from '../../data/channels';
 import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
 import EPGConsentModal from '../../components/EPGConsentModal';
+import EPGGuideModal from '../../components/EPGGuideModal';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -30,9 +32,10 @@ export default function HomeScreen() {
   const [epgProgress, setEpgProgress] = useState({ loaded: 0, total: 0 });
   const [isLoadingEPG, setIsLoadingEPG] = useState(false);
   
-  // EPG Consent State
-  const [showEPGConsent, setShowEPGConsent] = useState(true);
+  // EPG Consent State — começa false; só aparece se houver canais sem cache em disco
+  const [showEPGConsent, setShowEPGConsent] = useState(false);
   const [allowEPGLoading, setAllowEPGLoading] = useState(false);
+  const [showEPGGuide, setShowEPGGuide] = useState(false);
   
   const prefetchedRef = useRef(false);
   
@@ -46,9 +49,32 @@ export default function HomeScreen() {
   const { favorites } = useFavoritesStore();
   const { adultUnlocked, unlockAdult } = useSettingsStore();
 
-  // Initialize EPG service
+  // Initialize EPG: carrega disco → memória silenciosamente.
+  // Só mostra modal de consentimento se ainda há canais sem cache.
   useEffect(() => {
-    initEPGService();
+    const init = async () => {
+      await initEPGService();
+
+      // Todos os canais com mapeamento EPG (incluindo adulto — EPG não depende de unlock)
+      const mapped = getAllChannels(true).filter(c => hasEPGMapping(c.id));
+
+      // Carrega do disco → memória em lotes (evita travar UI thread)
+      const BATCH = 10;
+      for (let i = 0; i < mapped.length; i += BATCH) {
+        mapped.slice(i, i + BATCH).forEach(c => loadFromDiskCache(c.id));
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+      }
+
+      // Verifica quantos ainda precisam de fetch de rede
+      const needsNetwork = mapped.filter(c => !hasFreshCache(c.id));
+      if (needsNetwork.length > 0) {
+        // Há canais sem cache válido → pede consentimento ao usuário
+        setShowEPGConsent(true);
+      }
+      // Caso contrário: EPG já na memória, cards mostram programação imediatamente
+    };
+
+    init();
   }, []);
 
   const categories = getCategories(adultUnlocked);
@@ -173,13 +199,21 @@ export default function HomeScreen() {
             <Text style={styles.title}>Saimo TV</Text>
             <Text style={styles.subtitle}>{channels.length} canais</Text>
           </View>
-          <TouchableOpacity style={styles.searchButton} onPress={toggleSearch}>
-            <Ionicons 
-              name={showSearch ? 'close' : 'search'} 
-              size={24} 
-              color={Colors.text} 
-            />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.searchButton}
+              onPress={() => setShowEPGGuide(true)}
+            >
+              <Ionicons name="calendar-outline" size={22} color={Colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.searchButton} onPress={toggleSearch}>
+              <Ionicons
+                name={showSearch ? 'close' : 'search'}
+                size={24}
+                color={Colors.text}
+              />
+            </TouchableOpacity>
+          </View>
         </View>
         
         {/* Search Input */}
@@ -248,6 +282,11 @@ export default function HomeScreen() {
         onAccept={handleEPGAccept}
         onDecline={handleEPGDecline}
       />
+
+      <EPGGuideModal
+        visible={showEPGGuide}
+        onClose={() => setShowEPGGuide(false)}
+      />
     </View>
   );
 }
@@ -277,6 +316,11 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
     marginTop: 2,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
   },
   searchButton: {
     padding: Spacing.sm,

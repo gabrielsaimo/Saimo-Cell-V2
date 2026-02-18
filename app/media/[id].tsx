@@ -42,7 +42,8 @@ export default function MediaDetailScreen() {
   
   const [media, setMedia] = useState<MediaItem | null>(null);
   const [loading, setLoading] = useState(true);
-  
+  const [overviewExpanded, setOverviewExpanded] = useState(false);
+
   const { isFavorite, addFavorite, removeFavorite, addToHistory } = useMediaStore();
   const [favorite, setFavorite] = useState(false);
 
@@ -272,7 +273,28 @@ export default function MediaDetailScreen() {
         {tmdb?.overview && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Sinopse</Text>
-            <Text style={styles.overview}>{tmdb.overview}</Text>
+            <Text
+              style={styles.overview}
+              numberOfLines={overviewExpanded ? undefined : 3}
+            >
+              {tmdb.overview}
+            </Text>
+            {tmdb.overview.length > 150 && (
+              <TouchableOpacity
+                onPress={() => setOverviewExpanded(v => !v)}
+                style={styles.seeMoreBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.seeMoreText}>
+                  {overviewExpanded ? 'Ver menos' : 'Ver mais'}
+                </Text>
+                <Ionicons
+                  name={overviewExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={Colors.primary}
+                />
+              </TouchableOpacity>
+            )}
             
             {/* Extra Info */}
             <View style={styles.metaInfo}>
@@ -483,6 +505,18 @@ const styles = StyleSheet.create({
     fontSize: Typography.body.fontSize,
     lineHeight: 22,
     paddingHorizontal: Spacing.lg,
+  },
+  seeMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.lg,
+    marginTop: Spacing.xs,
+  },
+  seeMoreText: {
+    color: Colors.primary,
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
   },
   castCard: {
     width: 80,

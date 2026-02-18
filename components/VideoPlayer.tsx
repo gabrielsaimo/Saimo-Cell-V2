@@ -7,7 +7,6 @@ import {
   Dimensions,
   StatusBar,
   BackHandler,
-  ScrollView,
   Platform,
 } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -23,7 +22,7 @@ import type { Channel, CurrentProgram } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
 import { getCurrentProgram, fetchChannelEPG } from '../services/epgService';
-import { channels as allChannelsList } from '../data/channels';
+import EPGGuideModal from './EPGGuideModal';
 
 function getResolutionLabel(h: number): string {
   if (h >= 2160) return '4K';
@@ -42,12 +41,16 @@ interface VideoPlayerProps {
 export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  
+
+  // Active channel state — starts from prop, switches in-place without navigation
+  const [activeChannel, setActiveChannel] = useState<Channel>(channel);
+
   // Google Cast Client
   const client = useRemoteMediaClient();
 
-  // Setup expo-video player
-  const player = useVideoPlayer(channel.url, player => {
+  // Setup expo-video player — created once with initial URL, switched via player.replace()
+  const initialUrlRef = useRef(channel.url);
+  const player = useVideoPlayer(initialUrlRef.current, player => {
     player.play();
   });
 
@@ -62,35 +65,31 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const { toggleFavorite, isFavorite } = useFavoritesStore();
   const [favorite, setFavorite] = useState(isFavorite(channel.id));
 
+  // Sync favorite when channel switches
+  useEffect(() => {
+    setFavorite(isFavorite(activeChannel.id));
+  }, [activeChannel.id]);
+
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Cast Media when client connects or channel changes
+  // Cast Media when client connects or active channel changes
   useEffect(() => {
     if (client) {
       client.loadMedia({
         mediaInfo: {
-          contentUrl: channel.url,
+          contentUrl: activeChannel.url,
           metadata: {
-            type: 'movie', 
-            title: channel.name,
-            images: channel.logo ? [{ url: channel.logo }] : [],
+            type: 'movie',
+            title: activeChannel.name,
+            images: activeChannel.logo ? [{ url: activeChannel.logo }] : [],
           },
         },
         autoplay: true,
       });
     }
-  }, [client, channel]);
+  }, [client, activeChannel]);
 
-  // Handle Player Source Change explicitly if needed (useVideoPlayer handles simple string changes, 
-  // but explicitly replacing can be safer for deep updates)
-  useEffect(() => {
-    if (player && channel.url) {
-        // useVideoPlayer handles this, but we can force replace if logic requires
-        // player.replace(channel.url); 
-        // For now relying on useVideoPlayer dependency update
-    }
-  }, [channel.url, player]);
 
   // Listener setup
   useEffect(() => {
@@ -159,22 +158,23 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     };
   }, []);
 
-  // Fetch EPG
+  // Fetch EPG — re-runs when active channel changes
   useEffect(() => {
-    fetchChannelEPG(channel.id).then(() => {
+    setEpg(null);
+    fetchChannelEPG(activeChannel.id).then(() => {
       if (isMountedRef.current) {
-        setEpg(getCurrentProgram(channel.id));
+        setEpg(getCurrentProgram(activeChannel.id));
       }
     }).catch(() => {});
 
     const interval = setInterval(() => {
       if (isMountedRef.current) {
-        setEpg(getCurrentProgram(channel.id));
+        setEpg(getCurrentProgram(activeChannel.id));
       }
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [channel.id]);
+  }, [activeChannel.id]);
 
   // Auto-hide controls
   useEffect(() => {
@@ -211,9 +211,9 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   }, [router]);
 
   const handleToggleFavorite = useCallback(() => {
-    toggleFavorite(channel.id);
+    toggleFavorite(activeChannel.id);
     setFavorite(prev => !prev);
-  }, [channel.id, toggleFavorite]);
+  }, [activeChannel.id, toggleFavorite]);
 
   const handleScreenPress = useCallback(() => {
     if (showGuide) {
@@ -227,24 +227,13 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 
   const handleRetry = useCallback(() => {
     setHasError(false);
-    player.replace(channel.url);
+    player.replace(activeChannel.url);
     player.play();
-  }, [channel.url, player]);
+  }, [activeChannel.url, player]);
 
   // VideoView handles resolution automatically but doesn't expose strict event like "onReadyForDisplay" 
   // with natural size in the same way. We can inspect player.videoSize if available via event.
   // For now leaving resolution simplified.
-
-  // Guide Logic
-  const guideChannels = useMemo(() => {
-    if (!showGuide) return [];
-    return allChannelsList.map(ch => ({
-      channel: ch,
-      epg: getCurrentProgram(ch.id),
-    }));
-  }, [showGuide]);
-
-  const guideScrollRef = useRef<ScrollView>(null);
 
   const handleToggleGuide = useCallback(() => {
     setShowGuide(prev => !prev);
@@ -253,25 +242,13 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   }, [showGuide]);
 
   const handleSwitchChannel = useCallback((targetChannel: Channel) => {
-    setShowGuide(false);
-    // Just replace the route, useEffect cleanup handles the rest
-    router.replace({
-      pathname: '/player/[id]',
-      params: { id: targetChannel.id },
-    });
-  }, [router]);
-
-  // Scroll to current channel in guide
-  useEffect(() => {
-    if (showGuide && guideScrollRef.current) {
-      const idx = allChannelsList.findIndex(ch => ch.id === channel.id);
-      if (idx > 0) {
-        setTimeout(() => {
-          guideScrollRef.current?.scrollTo({ y: Math.max(0, idx * 52 - 60), animated: false });
-        }, 50);
-      }
-    }
-  }, [showGuide, channel.id]);
+    if (targetChannel.id === activeChannel.id) return;
+    setHasError(false);
+    setActiveChannel(targetChannel);
+    // Swap stream in-place — no navigation, no flicker
+    player.replace(targetChannel.url);
+    player.play();
+  }, [activeChannel.id, player]);
 
   const { width, height } = Dimensions.get('window');
 
@@ -353,8 +330,8 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               </TouchableOpacity>
 
               <View style={styles.channelInfo}>
-                <Text style={styles.channelName}>{channel.name}</Text>
-                <Text style={styles.channelCategory}>{channel.category}</Text>
+                <Text style={styles.channelName}>{activeChannel.name}</Text>
+                <Text style={styles.channelCategory}>{activeChannel.category}</Text>
               </View>
 
               {/* Cast Button */}
@@ -434,7 +411,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                       <View style={styles.liveDot} />
                       <Text style={styles.liveText}>AO VIVO</Text>
                     </View>
-                    <Text style={styles.programTitle}>{channel.name}</Text>
+                    <Text style={styles.programTitle}>{activeChannel.name}</Text>
                   </>
                 )}
               </View>
@@ -442,65 +419,14 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
           </>
         )}
 
-        {/* Global Programming Guide Overlay */}
-        {showGuide && (
-          <View style={styles.guideOverlay}>
-            <TouchableOpacity style={styles.guideBackdrop} onPress={handleToggleGuide} activeOpacity={1} />
-            <View style={styles.guideContainer}>
-              <View style={styles.guideHeader}>
-                <Ionicons name="tv-outline" size={18} color={Colors.primary} />
-                <Text style={styles.guideTitle}>Guia de Canais</Text>
-                <TouchableOpacity onPress={handleToggleGuide} style={styles.guideClose}>
-                  <Ionicons name="close" size={24} color={Colors.text} />
-                </TouchableOpacity>
-              </View>
-              <ScrollView
-                ref={guideScrollRef}
-                style={styles.guideList}
-                showsVerticalScrollIndicator={false}
-              >
-                {guideChannels.map(({ channel: ch, epg: chEpg }) => {
-                  const isActive = ch.id === channel.id;
-                  return (
-                    <TouchableOpacity
-                      key={ch.id}
-                      style={[styles.guideItem, isActive && styles.guideItemActive]}
-                      onPress={() => !isActive && handleSwitchChannel(ch)}
-                      activeOpacity={isActive ? 1 : 0.6}
-                    >
-                      <View style={styles.guideChannelNum}>
-                        <Text style={[styles.guideNumText, isActive && styles.guideNumTextActive]}>
-                          {ch.channelNumber}
-                        </Text>
-                      </View>
-                      <View style={styles.guideChannelInfo}>
-                        <Text
-                          style={[styles.guideChannelName, isActive && styles.guideChannelNameActive]}
-                          numberOfLines={1}
-                        >
-                          {ch.name}
-                        </Text>
-                        {chEpg?.current ? (
-                          <Text style={styles.guideProgramName} numberOfLines={1}>
-                            {chEpg.current.title}
-                          </Text>
-                        ) : (
-                          <Text style={styles.guideProgramEmpty}>{ch.category}</Text>
-                        )}
-                      </View>
-                      {isActive && (
-                        <View style={styles.guideActiveBadge}>
-                          <View style={styles.guideActiveDot} />
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </View>
-        )}
       </TouchableOpacity>
+
+      {/* EPG Guide Modal — same component used from the main tab */}
+      <EPGGuideModal
+        visible={showGuide}
+        onClose={() => setShowGuide(false)}
+        onChannelPress={handleSwitchChannel}
+      />
     </View>
   );
 }
@@ -686,96 +612,5 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
     flex: 1,
-  },
-  // Guide overlay styles
-  guideOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    flexDirection: 'row',
-  },
-  guideBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  guideContainer: {
-    width: '50%',
-    backgroundColor: 'rgba(20,20,20,0.98)',
-  },
-  guideHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
-    gap: Spacing.sm,
-  },
-  guideTitle: {
-    color: Colors.text,
-    fontSize: Typography.body.fontSize,
-    fontWeight: '700',
-    flex: 1,
-  },
-  guideClose: {
-    padding: Spacing.xs,
-  },
-  guideList: {
-    flex: 1,
-  },
-  guideItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
-  },
-  guideItemActive: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderLeftWidth: 3,
-    borderLeftColor: Colors.primary,
-  },
-  guideChannelNum: {
-    width: 32,
-    alignItems: 'center',
-  },
-  guideNumText: {
-    color: Colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
-    fontFamily: 'monospace',
-  },
-  guideNumTextActive: {
-    color: Colors.primary,
-  },
-  guideChannelInfo: {
-    flex: 1,
-    marginLeft: Spacing.sm,
-  },
-  guideChannelName: {
-    color: Colors.text,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  guideChannelNameActive: {
-    color: Colors.primary,
-  },
-  guideProgramName: {
-    color: Colors.textSecondary,
-    fontSize: 11,
-    marginTop: 1,
-  },
-  guideProgramEmpty: {
-    color: 'rgba(255,255,255,0.25)',
-    fontSize: 11,
-    marginTop: 1,
-  },
-  guideActiveBadge: {
-    marginLeft: Spacing.sm,
-  },
-  guideActiveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.live,
   },
 });

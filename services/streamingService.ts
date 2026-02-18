@@ -355,7 +355,7 @@ export async function loadNextPage(categoryId: string): Promise<{
         };
     }
 
-    const newItems = await fetchCategoryPage(categoryId, nextPage);
+    await fetchCategoryPage(categoryId, nextPage);
 
     return {
         items: CATEGORY_CACHE.get(categoryId) || [],
@@ -428,12 +428,40 @@ export function searchInLoadedData(query: string): MediaItem[] {
 // Cache management
 // ============================================================
 
+// ============================================================
+// TMDB ID index — lazy, rebuilt on demand
+// ============================================================
+let _tmdbIndex: Map<number, MediaItem> | null = null;
+
+function invalidateTmdbIndex() {
+    _tmdbIndex = null;
+}
+
+/**
+ * Find a MediaItem in the local catalog by TMDB ID.
+ * Builds a lazy index on first call — O(1) lookups after that.
+ */
+export function findByTmdbId(tmdbId: number): MediaItem | null {
+    if (!_tmdbIndex) {
+        _tmdbIndex = new Map();
+        CATEGORY_CACHE.forEach(items => {
+            for (const item of items) {
+                if (item.tmdb?.id != null && !_tmdbIndex!.has(item.tmdb.id)) {
+                    _tmdbIndex!.set(item.tmdb.id, item);
+                }
+            }
+        });
+    }
+    return _tmdbIndex.get(tmdbId) ?? null;
+}
+
 /** Clear memory caches only — disk cache stays intact for next startup */
 export function clearOnlyMemory() {
     PAGE_CACHE.clear();
     CATEGORY_CACHE.clear();
     LAST_PAGE.clear();
     HAS_MORE.clear();
+    invalidateTmdbIndex();
 }
 
 /** Clear EVERYTHING: memory + disk. Used only by the hard reload button. */
@@ -442,6 +470,7 @@ export function clearAllCaches() {
     CATEGORY_CACHE.clear();
     LAST_PAGE.clear();
     HAS_MORE.clear();
+    invalidateTmdbIndex();
     try {
         const dir = getDiskDir();
         if (dir.exists) dir.delete();

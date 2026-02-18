@@ -18,6 +18,7 @@ import { useMediaStore } from '../stores/mediaStore';
 interface MediaCardProps {
   item: MediaItem & { episodes?: any };
   size?: 'small' | 'medium' | 'large';
+  cardWidth?: number;
 }
 
 const { width } = Dimensions.get('window');
@@ -48,12 +49,14 @@ const getRatingColor = (rating?: number) => {
   return '#EF4444'; // Vermelho
 };
 
-const MediaCard = memo(({ item, size = 'medium' }: MediaCardProps) => {
+const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) => {
   const router = useRouter();
   const { isFavorite, addFavorite, removeFavorite } = useMediaStore();
   const [favorite, setFavorite] = useState(isFavorite(item.id));
-  
-  const dimensions = SIZES[size];
+
+  const dimensions = cardWidth
+    ? { width: cardWidth, height: Math.round(cardWidth * 1.5) }
+    : SIZES[size];
   const tmdb = item.tmdb;
 
   // Verificar se é série (tem episódios)

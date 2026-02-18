@@ -84,9 +84,9 @@ export const useSettingsStore = create<SettingsStore>()(
         {
             name: 'saimo-settings',
             storage: createJSONStorage(() => AsyncStorage),
-            // Não persistir o estado de desbloqueio adulto
             partialize: (state) => ({
                 adultPin: state.adultPin,
+                adultUnlocked: state.adultUnlocked,
                 autoplay: state.autoplay,
                 volume: state.volume,
                 showChannelNumber: state.showChannelNumber,

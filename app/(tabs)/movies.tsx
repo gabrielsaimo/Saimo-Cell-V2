@@ -36,6 +36,7 @@ import {
   hydrateFromDisk,
 } from '../../services/streamingService';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { getTrendingToday, getTrendingWeek, clearTrendingCache } from '../../services/trendingService';
 
 const ADULT_CATEGORY_IDS = [
   'hot-adultos-bella-da-semana',
@@ -84,6 +85,12 @@ export default function MoviesScreen() {
   const [categories, setCategories] = useState<Map<string, MediaItem[]>>(new Map());
   const [totalLoaded, setTotalLoaded] = useState(0);
   const [bgLoading, setBgLoading] = useState(false);
+
+  // Trending state
+  const [trendingToday, setTrendingToday] = useState<MediaItem[]>([]);
+  const [trendingWeek, setTrendingWeek] = useState<MediaItem[]>([]);
+  const [trendingLoading, setTrendingLoading] = useState(false);
+  const trendingLoadedRef = useRef(false);
 
   // Search: input separado do query efetivo (debounced)
   const [searchInput, setSearchInput] = useState('');
@@ -222,6 +229,27 @@ export default function MoviesScreen() {
     setTotalLoaded(getTotalLoadedCount());
   }, []);
 
+  // Carrega tendências lazily após o catálogo ter dados (sem bloquear UI)
+  const loadTrending = useCallback(() => {
+    if (trendingLoadedRef.current) return;
+    trendingLoadedRef.current = true;
+
+    InteractionManager.runAfterInteractions(() => {
+      if (!mountedRef.current) return;
+      setTrendingLoading(true);
+      Promise.all([getTrendingToday(), getTrendingWeek()])
+        .then(([today, week]) => {
+          if (!mountedRef.current) return;
+          setTrendingToday(today);
+          setTrendingWeek(week);
+        })
+        .catch(e => console.warn('[Trending] Load failed:', e))
+        .finally(() => {
+          if (mountedRef.current) setTrendingLoading(false);
+        });
+    });
+  }, []);
+
   // Iniciar background loading (separado para poder reusar)
   const startBgLoad = useCallback(() => {
     InteractionManager.runAfterInteractions(() => {
@@ -264,6 +292,8 @@ export default function MoviesScreen() {
       // Continuar background loading para páginas restantes
       startBgLoad();
       catalogLoadedRef.current = true;
+      // Carregar tendências após o catálogo estar disponível
+      loadTrending();
       return;
     }
 
@@ -309,6 +339,8 @@ export default function MoviesScreen() {
 
         if (i === 0) {
           setLoading(false);
+          // Carregar tendências assim que o primeiro batch estiver disponível
+          loadTrending();
         }
       }
 
@@ -344,9 +376,13 @@ export default function MoviesScreen() {
     setRefreshing(true);
     stopLoading();
     clearAllCaches();
+    clearTrendingCache();
     setCategories(new Map());
     setTotalLoaded(0);
+    setTrendingToday([]);
+    setTrendingWeek([]);
     catalogLoadedRef.current = false;
+    trendingLoadedRef.current = false;
     loadCatalog(true);
   }, [adultUnlocked]);
 
@@ -443,6 +479,36 @@ export default function MoviesScreen() {
       colors={[Colors.primary]}
     />
   ), [refreshing, handlePullRefresh]);
+
+  // Seção de tendências — aparece no topo da lista de categorias
+  // Lazy: só renderiza quando tiver dados ou estiver carregando
+  const TrendingSection = useMemo(() => {
+    const hasAny = trendingToday.length > 0 || trendingWeek.length > 0;
+    if (!trendingLoading && !hasAny) return null;
+
+    return (
+      <View>
+        {/* Tendências de Hoje */}
+        {trendingLoading && trendingToday.length === 0 ? (
+          <View style={styles.trendingPlaceholder}>
+            <Text style={styles.trendingPlaceholderTitle}>🔥 Tendências de Hoje</Text>
+            <ActivityIndicator size="small" color={Colors.primary} style={styles.trendingSpinner} />
+          </View>
+        ) : (
+          <MediaRow title="🔥 Tendências de Hoje" items={trendingToday} />
+        )}
+        {/* Tendências da Semana */}
+        {trendingLoading && trendingWeek.length === 0 ? (
+          <View style={styles.trendingPlaceholder}>
+            <Text style={styles.trendingPlaceholderTitle}>📅 Tendências da Semana</Text>
+            <ActivityIndicator size="small" color={Colors.primary} style={styles.trendingSpinner} />
+          </View>
+        ) : (
+          <MediaRow title="📅 Tendências da Semana" items={trendingWeek} />
+        )}
+      </View>
+    );
+  }, [trendingToday, trendingWeek, trendingLoading]);
 
   // Header component para a grid view
   const GridHeader = useMemo(() => {
@@ -605,12 +671,10 @@ export default function MoviesScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
           showsVerticalScrollIndicator={false}
           refreshControl={refreshControl}
+          ListHeaderComponent={TrendingSection}
           ListFooterComponent={ListFooter}
           estimatedItemSize={ROW_HEIGHT}
           initialNumToRender={2}
-          // maxToRenderPerBatch removed
-          // windowSize removed
-          // getItemLayout removed (estimatedItemSize is enough)
         />
       )}
     </View>
@@ -708,5 +772,21 @@ const styles = StyleSheet.create({
   bgLoadingText: {
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
+  },
+  trendingPlaceholder: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.xl,
+    height: 36,
+    gap: Spacing.sm,
+  },
+  trendingPlaceholderTitle: {
+    color: Colors.text,
+    fontSize: Typography.h3.fontSize,
+    fontWeight: '700',
+  },
+  trendingSpinner: {
+    marginLeft: Spacing.sm,
   },
 });
