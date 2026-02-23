@@ -83,7 +83,8 @@ export default function MediaDetailScreen() {
 
       if (isMounted) {
         setMedia(item);
-        setFavorite(isFavorite(id));
+        // Only set the initial favorite state once to avoid missing updates from store
+        // but we'll let the store manage the actual state.
         setLoading(false); // Show content immediately
       }
     }
@@ -92,7 +93,14 @@ export default function MediaDetailScreen() {
     return () => {
         isMounted = false;
     };
-  }, [id, isFavorite, params]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]); // DO NOT depend on isFavorite or params to avoid infinite loops
+
+  // Update favorite state separately when store changes
+  const isFav = isFavorite(id as string);
+  useEffect(() => {
+    setFavorite(isFav);
+  }, [isFav]);
 
   const handleBack = useCallback(() => {
     router.back();

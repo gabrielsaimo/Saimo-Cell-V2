@@ -1,12 +1,12 @@
-import React, { memo } from 'react';
+import React, { memo, useMemo, useCallback } from 'react';
 import { 
   View, 
-  ScrollView, 
   StyleSheet, 
   Text,
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { FlashList } from '@shopify/flash-list';
 
 import type { Channel } from '../types';
 import { Colors, Spacing } from '../constants/Colors';
@@ -18,8 +18,8 @@ interface ChannelListProps {
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - Spacing.lg * 3) / 2;
+const ESTIMATED_ITEM_SIZE = 180 + Spacing.md; 
 
-// Lista simples sem virtualização - todos os canais carregam de uma vez
 const ChannelList = memo(({ channels }: ChannelListProps) => {
   if (channels.length === 0) {
     return (
@@ -31,39 +31,47 @@ const ChannelList = memo(({ channels }: ChannelListProps) => {
   }
 
   // Divide canais em pares para layout de 2 colunas
-  const rows: Channel[][] = [];
-  for (let i = 0; i < channels.length; i += 2) {
-    rows.push(channels.slice(i, i + 2));
-  }
+  const rows = useMemo(() => {
+    const result: Channel[][] = [];
+    for (let i = 0; i < channels.length; i += 2) {
+      result.push(channels.slice(i, i + 2));
+    }
+    return result;
+  }, [channels]);
+
+  const renderRow = useCallback(({ item: row }: { item: Channel[] }) => (
+    <View style={styles.row}>
+      {row.map((channel) => (
+        <ChannelCard key={channel.id} channel={channel} />
+      ))}
+      {row.length === 1 && <View style={{ width: CARD_WIDTH }} />}
+    </View>
+  ), []);
 
   return (
-    <ScrollView 
-      style={styles.scrollView}
-      contentContainerStyle={styles.contentContainer}
-      showsVerticalScrollIndicator={false}
-    >
-      {rows.map((row, rowIndex) => (
-        <View key={rowIndex} style={styles.row}>
-          {row.map((channel) => (
-            <ChannelCard key={channel.id} channel={channel} />
-          ))}
-          {/* Placeholder para manter layout quando há apenas 1 item na row */}
-          {row.length === 1 && <View style={{ width: CARD_WIDTH }} />}
-        </View>
-      ))}
-    </ScrollView>
+    <View style={styles.listContainer}>
+      <FlashList
+        data={rows}
+        renderItem={renderRow}
+        estimatedItemSize={ESTIMATED_ITEM_SIZE}
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+        keyExtractor={(item) => item[0].id}
+      />
+    </View>
   );
 });
 
 ChannelList.displayName = 'ChannelList';
 
 const styles = StyleSheet.create({
-  scrollView: {
+  listContainer: {
     flex: 1,
+    minHeight: 200,
   },
   contentContainer: {
     padding: Spacing.lg,
-    paddingBottom: 120,
+    paddingBottom: 120, // Repassado via FlashList contentContainer
   },
   row: {
     flexDirection: 'row',

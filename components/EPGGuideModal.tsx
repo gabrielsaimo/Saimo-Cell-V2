@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,12 +8,10 @@ import {
   FlatList,
   ScrollView,
   Dimensions,
-  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 
@@ -21,8 +19,9 @@ import type { Channel, CurrentProgram } from '../types';
 import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../constants/Colors';
 import { getCurrentProgram, onEPGUpdate } from '../services/epgService';
 import { getAllChannels } from '../data/channels';
+import { useSettingsStore } from '../stores/settingsStore';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 
 // ─── EPG Row ────────────────────────────────────────────────────────────────
 
@@ -249,13 +248,15 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
+  const adultUnlocked = useSettingsStore((s) => s.adultUnlocked);
 
-  // Normais primeiro, adultos no final — garante lazy load natural do FlatList
+  // Normais primeiro, adultos no final (só se liberado) — lazy load natural do FlatList
   const allChannels = useMemo(() => {
     const normal = getAllChannels(false);
+    if (!adultUnlocked) return normal;
     const adult = getAllChannels(true).filter((c) => c.category === 'Adulto');
     return [...normal, ...adult];
-  }, []);
+  }, [adultUnlocked]);
 
   // Quantidade de canais normais → initialNumToRender carrega todos de uma vez
   const normalCount = useMemo(

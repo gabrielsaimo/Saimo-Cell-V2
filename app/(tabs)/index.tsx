@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   InteractionManager,
+  Switch, // added
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,8 +16,9 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useChannelStore } from '../../stores/channelStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache, loadFromDiskCache } from '../../services/epgService';
+import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache, loadFromDiskCache, onEPGProgress, getEPGLoadedCount } from '../../services/epgService';
 import { getAllChannels } from '../../data/channels';
+import { getTotalEPGChannels } from '../../data/epgMappings';
 import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
@@ -44,10 +46,16 @@ export default function HomeScreen() {
     setCategory, 
     getFilteredChannels, 
     getCategories,
+    isProList,
+    setProList,
+    proChannels,
+    fetchProChannels,
   } = useChannelStore();
   
   const { favorites } = useFavoritesStore();
   const { adultUnlocked, unlockAdult } = useSettingsStore();
+
+  const TOTAL_EPG = getTotalEPGChannels();
 
   // Initialize EPG: carrega disco → memória silenciosamente.
   // Só mostra modal de consentimento se ainda há canais sem cache.
@@ -147,6 +155,22 @@ export default function HomeScreen() {
     };
   }, [channels, allowEPGLoading]);
 
+  useEffect(() => {
+    const unsub = onEPGProgress((loaded) => {
+      setEpgProgress(prev => ({ ...prev, loaded }));
+    });
+    // Set initial count in case it's already loaded
+    setEpgProgress(prev => ({ ...prev, loaded: getEPGLoadedCount() }));
+    return unsub;
+  }, []);
+
+  const handleTogglePro = useCallback((val: boolean) => {
+    setProList(val);
+    if (val && proChannels.length === 0) {
+      fetchProChannels();
+    }
+  }, [setProList, fetchProChannels, proChannels.length]);
+
   const handleSelectCategory = useCallback((category: string) => {
     if (category === 'Adulto' && !adultUnlocked) {
       setPendingCategory(category);
@@ -200,6 +224,17 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>{channels.length} canais</Text>
           </View>
           <View style={styles.headerActions}>
+            <View style={styles.proToggleContainer}>
+              <Text style={styles.proToggleText}>Lite</Text>
+              <Switch
+                value={isProList}
+                onValueChange={handleTogglePro}
+                trackColor={{ false: Colors.surface, true: Colors.primary }}
+                thumbColor={isProList ? '#fff' : '#ccc'}
+                ios_backgroundColor={Colors.surface}
+              />
+              <Text style={styles.proToggleText}>Pro</Text>
+            </View>
             <TouchableOpacity
               style={styles.searchButton}
               onPress={() => setShowEPGGuide(true)}
@@ -239,16 +274,16 @@ export default function HomeScreen() {
         )}
 
         {/* EPG Loading Progress */}
-        {isLoadingEPG && epgProgress.total > 0 && (
+        {isLoadingEPG && epgProgress.total > 0 && epgProgress.loaded < epgProgress.total && (
           <View style={styles.epgProgressContainer}>
             <Text style={styles.epgProgressText}>
-              Carregando guia... {epgProgress.loaded}/{epgProgress.total}
+              Carregando guia... {epgProgress.loaded}/{TOTAL_EPG}
             </Text>
             <View style={styles.epgProgressBar}>
               <View 
                 style={[
                   styles.epgProgressFill, 
-                  { width: `${(epgProgress.loaded / epgProgress.total) * 100}%` }
+                  { width: `${Math.min(100, (epgProgress.loaded / TOTAL_EPG) * 100)}%` }
                 ]} 
               />
             </View>
@@ -321,6 +356,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+  },
+  proToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.full,
+    gap: 4,
+  },
+  proToggleText: {
+    color: Colors.text,
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
   },
   searchButton: {
     padding: Spacing.sm,

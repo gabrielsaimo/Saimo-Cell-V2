@@ -42,7 +42,6 @@ export default function SeriesDetailScreen() {
       if (!id) return;
       const item = await getSeriesById(id);
       setSeries(item);
-      setFavorite(isFavorite(id));
       
       // Se tiver progresso, selecionar a temporada correta
       const progress = getSeriesProgress(id);
@@ -53,7 +52,14 @@ export default function SeriesDetailScreen() {
       setLoading(false);
     }
     load();
-  }, [id, isFavorite, getSeriesProgress]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]); // Removido isFavorite e getSeriesProgress das dependências para evitar loop
+
+  // Atualizar estado de favorito separadamente
+  const isFav = isFavorite(id as string);
+  useEffect(() => {
+    setFavorite(isFav);
+  }, [isFav]);
 
   // Temporadas disponíveis
   const seasons = useMemo(() => {
