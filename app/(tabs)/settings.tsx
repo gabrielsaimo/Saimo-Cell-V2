@@ -246,7 +246,7 @@ export default function SettingsScreen() {
         {/* App Info */}
         <View style={styles.appInfo}>
           <Text style={styles.appName}>Saimo TV</Text>
-          <Text style={styles.appVersion}>Versão 1.0.0</Text>
+          <Text style={styles.appVersion}>Versão 1.1.0</Text>
         </View>
       </ScrollView>
 
@@ -300,7 +300,6 @@ const styles = StyleSheet.create({
     fontSize: Typography.caption.fontSize,
     fontWeight: '600',
     textTransform: 'uppercase',
-    letterSpacing: 1,
     marginBottom: Spacing.sm,
     marginTop: Spacing.md,
   },

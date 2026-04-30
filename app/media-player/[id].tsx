@@ -83,13 +83,27 @@ async function resolveRedirects(initialUrl: string): Promise<string> {
 }
 
 export default function MediaPlayerScreen() {
-  const params = useLocalSearchParams<{ id: string; url: string; title: string }>();
+  const params = useLocalSearchParams<{
+    id: string; url: string; title: string;
+    seriesId?: string; season?: string;
+    nextId?: string; nextUrl?: string; nextTitle?: string; nextSeason?: string; nextEpisode?: string;
+  }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   const rawUrl = params.url || '';
   const decodedUrl = rawUrl ? decodeURIComponent(rawUrl) : '';
-  const { id, title } = params;
+  const { id, seriesId, season } = params;
+
+  // Estado do episódio atual (pode mudar ao avançar)
+  const [currentTitle, setCurrentTitle] = useState(params.title || '');
+  const [nextEpisode, setNextEpisode] = useState<{
+    id: string; url: string; title: string; season: string; episode: string;
+  } | null>(
+    params.nextId && params.nextUrl
+      ? { id: params.nextId, url: decodeURIComponent(params.nextUrl), title: params.nextTitle || '', season: params.nextSeason || '', episode: params.nextEpisode || '' }
+      : null
+  );
 
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [showControls, setShowControls] = useState(true);
@@ -107,10 +121,11 @@ export default function MediaPlayerScreen() {
   const videoViewRef = useRef<VideoView>(null);
   const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
-  const { addToHistory } = useMediaStore();
+  const { addToHistory, setSeriesProgress } = useMediaStore();
   
   // Google Cast
   const client = useRemoteMediaClient();
+  const [isCasting, setIsCasting] = useState(false);
 
   // Resolve redirects logic
   useEffect(() => {
@@ -140,14 +155,14 @@ export default function MediaPlayerScreen() {
     return () => { isMountedRef.current = false; };
   }, [decodedUrl]);
 
-  // Load Cast Media
+  // Load Cast Media — pause local player when casting starts
   useEffect(() => {
     if (client && resolvedUrl) {
       client.loadMedia({
         mediaInfo: {
           contentUrl: resolvedUrl,
           metadata: {
-            title: title || 'Filme/Série',
+            title: currentTitle || 'Filme/Série',
             subtitle: 'Saimo TV',
             images: [
               { url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg' },
@@ -157,8 +172,12 @@ export default function MediaPlayerScreen() {
         },
         autoplay: true,
       });
+      try { if (player) player.pause(); } catch (_) {}
+      setIsCasting(true);
+    } else {
+      setIsCasting(false);
     }
-  }, [client, resolvedUrl, title]);
+  }, [client, resolvedUrl]);
 
   // Expo Video Setup
   const player = useVideoPlayer(resolvedUrl, (player) => {
@@ -174,7 +193,7 @@ export default function MediaPlayerScreen() {
     subscriptions.push(player.addListener('statusChange', (payload) => {
        if (!isMountedRef.current) return;
        const { status, error } = payload;
-       
+
        if (status === 'loading') {
          setIsLoading(true);
        } else {
@@ -182,6 +201,11 @@ export default function MediaPlayerScreen() {
          if (status === 'error' && error) {
             setError(`Erro ao reproduzir: ${error.message}`);
          }
+       }
+       // Captura duração assim que o player tem a informação
+       const d = player.duration;
+       if (d != null && isFinite(d) && d > 0) {
+         setDuration(d);
        }
     }));
 
@@ -193,9 +217,9 @@ export default function MediaPlayerScreen() {
     subscriptions.push(player.addListener('timeUpdate', (event) => {
       if (!isMountedRef.current) return;
       setCurrentTime(event.currentTime);
-      // duration might be available on player.duration
-      if (player.duration) {
-         setDuration(player.duration);
+      const d = player.duration;
+      if (d != null && isFinite(d) && d > 0) {
+        setDuration(d);
       }
     }));
     
@@ -315,6 +339,34 @@ export default function MediaPlayerScreen() {
     }
   }, []);
 
+  const handleNextEpisode = useCallback(() => {
+    if (!nextEpisode || !player) return;
+    // Salva progresso do episódio atual
+    if (seriesId && season) {
+      setSeriesProgress(seriesId, parseInt(season), parseInt(nextEpisode.episode), nextEpisode.id);
+    }
+    setCurrentTitle(nextEpisode.title);
+    setCurrentTime(0);
+    setDuration(0);
+    setError(null);
+    setIsLoading(true);
+    // Troca o stream sem sair do player
+    resolveRedirects(nextEpisode.url).then(finalUrl => {
+      if (!isMountedRef.current) return;
+      player.replace(finalUrl);
+      player.play();
+      setIsLoading(false);
+    }).catch(() => {
+      if (!isMountedRef.current) return;
+      player.replace(nextEpisode.url);
+      player.play();
+      setIsLoading(false);
+    });
+    // Não há mais próximo episódio após avançar (simplificado)
+    setNextEpisode(null);
+    resetHideTimer();
+  }, [nextEpisode, player, seriesId, season, setSeriesProgress, resetHideTimer]);
+
   const handleScreenPress = () => {
     if (showControls) setShowControls(false);
     else resetHideTimer();
@@ -350,6 +402,19 @@ export default function MediaPlayerScreen() {
           />
         ) : null}
       </TouchableOpacity>
+
+      {/* Casting Overlay */}
+      {isCasting && !isPip && (
+        <View style={styles.overlay}>
+          <MaterialIcons name="cast" size={56} color={Colors.primary} />
+          <Text style={[styles.loadingText, { marginTop: Spacing.lg, fontSize: Typography.h3.fontSize, fontWeight: '700' }]}>
+            Transmitindo
+          </Text>
+          <Text style={[styles.loadingText, { color: Colors.textSecondary, marginTop: Spacing.sm }]}>
+            {currentTitle}
+          </Text>
+        </View>
+      )}
 
       {/* Loading Overlay */}
       {isLoading && !error && !isPip && (
@@ -393,7 +458,7 @@ export default function MediaPlayerScreen() {
               <Ionicons name="arrow-back" size={24} color="white" />
             </TouchableOpacity>
             
-            <Text style={styles.title} numberOfLines={1}>{title || 'Reproduzindo'}</Text>
+            <Text style={styles.title} numberOfLines={1}>{currentTitle || 'Reproduzindo'}</Text>
 
             <View style={styles.topRightControls}>
                <CastButton style={{ width: 24, height: 24, tintColor: 'white', marginRight: 16 }} />
@@ -422,6 +487,13 @@ export default function MediaPlayerScreen() {
               <Ionicons name="play-forward" size={32} color="white" />
               <Text style={styles.skipText}>10s</Text>
             </TouchableOpacity>
+
+            {nextEpisode && (
+              <TouchableOpacity style={styles.nextEpButton} onPress={handleNextEpisode}>
+                <Ionicons name="play-skip-forward" size={24} color="white" />
+                <Text style={styles.nextEpText}>Próximo</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Bottom Bar */}
@@ -562,6 +634,20 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: 10,
     marginTop: 2,
+  },
+  nextEpButton: {
+    alignItems: 'center',
+    padding: Spacing.md,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.lg,
+    position: 'absolute',
+    right: Spacing.lg,
+  },
+  nextEpText: {
+    color: Colors.text,
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '600',
   },
   bottomBar: {
     paddingHorizontal: Spacing.lg,

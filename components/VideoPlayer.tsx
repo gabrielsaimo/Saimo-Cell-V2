@@ -4,27 +4,29 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   Dimensions,
   StatusBar,
   BackHandler,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import Video, { DRMType, SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
 import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { Channel, CurrentProgram } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
-import { getCurrentProgram, fetchChannelEPG } from '../services/epgService';
+import { getCurrentProgram, fetchChannelEPG, onEPGUpdate } from '../services/epgService';
 import EPGGuideModal from './EPGGuideModal';
 
-function getResolutionLabel(h: number): string {
+function toResLabel(h: number): string {
   if (h >= 2160) return '4K';
   if (h >= 1440) return '2K';
   if (h >= 1080) return '1080p';
@@ -32,6 +34,18 @@ function getResolutionLabel(h: number): string {
   if (h >= 480) return '480p';
   if (h >= 360) return '360p';
   return `${h}p`;
+}
+
+function formatTime(d: Date): string {
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatRemaining(min?: number): string {
+  if (!min) return '';
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${h}h${m}min`;
 }
 
 interface VideoPlayerProps {
@@ -42,268 +56,332 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // Active channel state — starts from prop, switches in-place without navigation
   const [activeChannel, setActiveChannel] = useState<Channel>(channel);
 
-  // Google Cast Client
   const client = useRemoteMediaClient();
+  const videoRef = useRef<VideoRef>(null);
 
-  // Setup expo-video player — created once with initial URL, switched via player.replace()
-  const initialUrlRef = useRef(channel.url);
-  const player = useVideoPlayer(initialUrlRef.current, player => {
-    player.play();
-  });
-
-  const videoViewRef = useRef<VideoView>(null);
-  const [showControls, setShowControls] = useState(true);
   const [epg, setEpg] = useState<CurrentProgram | null>(null);
   const [hasError, setHasError] = useState(false);
-  const [resolution, setResolution] = useState<string | null>(null);
+  const [videoResolution, setVideoResolution] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
-  const [isPip, setIsPip] = useState(false);
+  const [osdVisible, setOsdVisible] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [menuPage, setMenuPage] = useState<'main' | 'audio' | 'video' | 'cc'>('main');
+  const [videoKey, setVideoKey] = useState(0);
+  const [isCasting, setIsCasting] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [audioTracks, setAudioTracks] = useState<any[]>([]);
+  const [videoTracks, setVideoTracks] = useState<any[]>([]);
+  const [textTracks, setTextTracks] = useState<any[]>([]);
+  const [selectedAudioIdx, setSelectedAudioIdx] = useState<number | null>(null);
+  const [selectedVideoTrackId, setSelectedVideoTrackId] = useState<number | null>(null);
+  const [selectedTextIdx, setSelectedTextIdx] = useState<number | null>(null);
 
   const { toggleFavorite, isFavorite } = useFavoritesStore();
   const [favorite, setFavorite] = useState(isFavorite(channel.id));
 
-  // Sync favorite when channel switches
+  const osdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const switchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRetryingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  // ─── OSD ───
+  const showOSD = useCallback(() => {
+    setOsdVisible(true);
+    if (osdTimeoutRef.current) clearTimeout(osdTimeoutRef.current);
+    osdTimeoutRef.current = setTimeout(() => setOsdVisible(false), 5000);
+  }, []);
+
+  const hideOSD = useCallback(() => {
+    setOsdVisible(false);
+    if (osdTimeoutRef.current) clearTimeout(osdTimeoutRef.current);
+  }, []);
+
+  useEffect(() => { showOSD(); }, [activeChannel.id]); // eslint-disable-line
+
+  // ─── Channel switch ───
+  const handleSwitchChannel = useCallback((target: Channel) => {
+    if (target.id === activeChannel.id) return;
+    if (retryTimerRef.current)    { clearTimeout(retryTimerRef.current);    retryTimerRef.current    = null; }
+    if (retryIntervalRef.current) { clearTimeout(retryIntervalRef.current); retryIntervalRef.current = null; }
+    if (switchDebounceRef.current){ clearTimeout(switchDebounceRef.current); switchDebounceRef.current = null; }
+    isRetryingRef.current = false;
+    setIsRetrying(false);
+    setHasError(false);
+    setVideoResolution(null);
+    setAudioTracks([]);
+    setVideoTracks([]);
+    setTextTracks([]);
+    setSelectedAudioIdx(null);
+    setSelectedVideoTrackId(null);
+    setSelectedTextIdx(null);
+    setMenuPage('main');
+    setIsLoading(true);
+    setActiveChannel(target);
+    switchDebounceRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      setVideoKey(k => k + 1);
+    }, 200);
+  }, [activeChannel.id]);
+
+  // ─── Favorite sync ───
   useEffect(() => {
     setFavorite(isFavorite(activeChannel.id));
-  }, [activeChannel.id]);
-
-  const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isMountedRef = useRef(true);
-
-  // Cast Media when client connects or active channel changes
-  useEffect(() => {
-    if (client) {
-      client.loadMedia({
-        mediaInfo: {
-          contentUrl: activeChannel.url,
-          metadata: {
-            type: 'movie',
-            title: activeChannel.name,
-            images: activeChannel.logo ? [{ url: activeChannel.logo }] : [],
-          },
-        },
-        autoplay: true,
-      });
-    }
-  }, [client, activeChannel]);
-
-
-  // Listener setup
-  useEffect(() => {
-    if (!player) return;
-
-    const subscriptions: any[] = [];
-
-    subscriptions.push(player.addListener('statusChange', (payload) => {
-        if (!isMountedRef.current) return;
-        if (payload.status === 'error') {
-            setHasError(true);
-        }
-    }));
-    
-    // We can also listen to playingChange if needed, though useVideoPlayer hook handles re-renders often
-    // subscriptions.push(player.addListener('playingChange', ...));
-
-    return () => {
-        subscriptions.forEach(s => s.remove());
-    };
-  }, [player]); 
-
-  // Cleanup
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      try {
-        player.pause();
-      } catch (e) {
-        // Ignore pause errors on unmount
-        console.log('Error pausing on unmount:', e);
-      }
-    };
-  }, [player]);
-
-  // Force Landscape & Hide Navigation Bar
-  useEffect(() => {
-    async function enterFullScreen() {
-      try {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        if (Platform.OS === 'android') {
-          await NavigationBar.setPositionAsync('absolute');
-          await NavigationBar.setBackgroundColorAsync('#00000000');
-          await NavigationBar.setVisibilityAsync('hidden');
-          await NavigationBar.setBehaviorAsync('overlay-swipe');
-        }
-      } catch (e) {
-        console.warn('Error entering full screen:', e);
-      }
-    }
-    enterFullScreen();
-
-    return () => {
-      async function exitFullScreen() {
-        try {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-          if (Platform.OS === 'android') {
-            await NavigationBar.setVisibilityAsync('visible');
-          }
-        } catch (e) {
-          console.warn('Error exiting full screen:', e);
-        }
-      }
-      exitFullScreen();
-    };
-  }, []);
-
-  // Fetch EPG — re-runs when active channel changes
-  useEffect(() => {
-    setEpg(null);
-    fetchChannelEPG(activeChannel.id).then(() => {
-      if (isMountedRef.current) {
-        setEpg(getCurrentProgram(activeChannel.id));
-      }
-    }).catch(() => {});
-
-    const interval = setInterval(() => {
-      if (isMountedRef.current) {
-        setEpg(getCurrentProgram(activeChannel.id));
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [activeChannel.id]);
-
-  // Auto-hide controls
-  useEffect(() => {
-    if (showControls && !hasError) {
-      controlsTimeoutRef.current = setTimeout(() => {
-        if (isMountedRef.current) {
-          setShowControls(false);
-        }
-      }, 3000);
-    }
-    return () => {
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    };
-  }, [showControls, hasError]);
-
-  // Back Handler
-  useEffect(() => {
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleBack();
-      return true;
-    });
-    return () => backHandler.remove();
-  }, []);
-
-  const handleBack = useCallback(async () => {
-    // Navigate back first, let useEffect cleanup handle the player
-    router.back();
-    // Reset orientation after navigation start
-    try {
-      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-    } catch (e) {
-      console.warn('Failed to unlock orientation:', e);
-    }
-  }, [router]);
+  }, [activeChannel.id, isFavorite]);
 
   const handleToggleFavorite = useCallback(() => {
     toggleFavorite(activeChannel.id);
     setFavorite(prev => !prev);
   }, [activeChannel.id, toggleFavorite]);
 
-  const handleScreenPress = useCallback(() => {
-    if (showGuide) {
-      setShowGuide(false);
-      return;
+  // ─── Cast ───
+  const handleCast = useCallback(() => {
+    if (!client) return;
+    client.loadMedia({
+      mediaInfo: {
+        contentUrl: activeChannel.url,
+        metadata: {
+          type: 'movie',
+          title: activeChannel.name,
+          images: activeChannel.logo ? [{ url: activeChannel.logo }] : [],
+        },
+      },
+      autoplay: true,
+    });
+    setIsCasting(true);
+  }, [client, activeChannel]);
+
+  useEffect(() => {
+    if (client) handleCast();
+    else setIsCasting(false);
+  }, [client, handleCast]);
+
+  // ─── EPG ───
+  useEffect(() => {
+    const cached = getCurrentProgram(activeChannel.id);
+    if (cached) setEpg(cached);
+    else {
+      setEpg(null);
+      fetchChannelEPG(activeChannel.id).catch(() => {});
     }
-    if (!hasError) {
-      setShowControls(prev => !prev);
+    const interval = setInterval(() => {
+      if (isMountedRef.current) setEpg(getCurrentProgram(activeChannel.id));
+    }, 30000);
+    const unsub = onEPGUpdate((id) => {
+      if (id === activeChannel.id && isMountedRef.current) {
+        setEpg(getCurrentProgram(activeChannel.id));
+      }
+    });
+    return () => { clearInterval(interval); unsub(); };
+  }, [activeChannel.id]);
+
+  // ─── Mount + Fullscreen ───
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (osdTimeoutRef.current)     clearTimeout(osdTimeoutRef.current);
+      if (switchDebounceRef.current) clearTimeout(switchDebounceRef.current);
+      if (retryTimerRef.current)     clearTimeout(retryTimerRef.current);
+      if (retryIntervalRef.current)  clearTimeout(retryIntervalRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        if (Platform.OS === 'android') {
+          await NavigationBar.setVisibilityAsync('hidden');
+          await NavigationBar.setBehaviorAsync('overlay-swipe');
+        }
+      } catch {}
+    })();
+    return () => {
+      (async () => {
+        try {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          if (Platform.OS === 'android') {
+            await NavigationBar.setVisibilityAsync('visible');
+          }
+        } catch {}
+      })();
+    };
+  }, []);
+
+  // ─── Back ───
+  const handleBack = useCallback(async () => {
+    router.back();
+    try { await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP); } catch {}
+  }, [router]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (showMenu) { setShowMenu(false); return true; }
+      if (showGuide) { setShowGuide(false); return true; }
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [showMenu, showGuide, handleBack]);
+
+  // ─── Video callbacks ───
+  const onLoad = useCallback((data: any) => {
+    if (!isMountedRef.current) return;
+    if (isRetryingRef.current) {
+      isRetryingRef.current = false;
+      setIsRetrying(false);
+      if (retryTimerRef.current)    { clearTimeout(retryTimerRef.current);    retryTimerRef.current    = null; }
+      if (retryIntervalRef.current) { clearTimeout(retryIntervalRef.current); retryIntervalRef.current = null; }
     }
-  }, [hasError, showGuide]);
+    setHasError(false);
+    setIsLoading(false);
+    const h = data?.naturalSize?.height;
+    if (h && h > 0) setVideoResolution(toResLabel(h));
+  }, []);
+
+  const onError = useCallback(() => {
+    if (!isMountedRef.current) return;
+    setIsLoading(false);
+    if (!isRetryingRef.current) {
+      isRetryingRef.current = true;
+      setIsRetrying(true);
+      retryTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current) return;
+        isRetryingRef.current = false;
+        setIsRetrying(false);
+        setHasError(true);
+      }, 8000);
+    }
+    if (retryIntervalRef.current) clearTimeout(retryIntervalRef.current);
+    retryIntervalRef.current = setTimeout(() => {
+      if (!isMountedRef.current || !isRetryingRef.current) return;
+      setVideoKey(k => k + 1);
+    }, 2000);
+  }, []);
+
+  const onAudioTracks = useCallback((data: any) => {
+    setAudioTracks(data?.audioTracks ?? []);
+  }, []);
+
+  const onVideoTracks = useCallback((data: any) => {
+    const tracks = data?.videoTracks ?? [];
+    setVideoTracks(tracks);
+    const maxH = tracks.reduce((m: number, t: any) => Math.max(m, t.height ?? 0), 0);
+    if (maxH > 0) setVideoResolution(toResLabel(maxH));
+  }, []);
+
+  const onTextTracks = useCallback((data: any) => {
+    setTextTracks(data?.textTracks ?? []);
+  }, []);
 
   const handleRetry = useCallback(() => {
+    isRetryingRef.current = false;
+    setIsRetrying(false);
     setHasError(false);
-    player.replace(activeChannel.url);
-    player.play();
-  }, [activeChannel.url, player]);
+    setIsLoading(true);
+    if (retryTimerRef.current)    { clearTimeout(retryTimerRef.current);    retryTimerRef.current    = null; }
+    if (retryIntervalRef.current) { clearTimeout(retryIntervalRef.current); retryIntervalRef.current = null; }
+    setVideoKey(k => k + 1);
+  }, []);
 
-  // VideoView handles resolution automatically but doesn't expose strict event like "onReadyForDisplay" 
-  // with natural size in the same way. We can inspect player.videoSize if available via event.
-  // For now leaving resolution simplified.
+  const onBandwidthUpdate = useCallback((data: any) => {
+    if (!isMountedRef.current) return;
+    const h = data?.height;
+    if (h && h > 0) setVideoResolution(toResLabel(h));
+  }, []);
 
-  const handleToggleGuide = useCallback(() => {
-    setShowGuide(prev => !prev);
-    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    if (!showGuide) setShowControls(true);
-  }, [showGuide]);
+  // ─── DRM config ───
+  const drmConfig = useMemo(() => {
+    if (!activeChannel.drm?.clearKey) return undefined;
+    return {
+      type: DRMType.CLEARKEY,
+      licenseServer: 'http://127.0.0.1:8765',
+    };
+  }, [activeChannel.drm?.clearKey]);
 
-  const handleSwitchChannel = useCallback((targetChannel: Channel) => {
-    if (targetChannel.id === activeChannel.id) return;
-    setHasError(false);
-    setActiveChannel(targetChannel);
-    // Swap stream in-place — no navigation, no flicker
-    player.replace(targetChannel.url);
-    player.play();
-  }, [activeChannel.id, player]);
-
-  const { width, height } = Dimensions.get('window');
-
-  const formatRemaining = (minutes?: number) => {
-    if (!minutes) return '';
-    if (minutes < 60) return `${minutes}min`;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours}h${mins}min`;
-  };
-
-  const handlePip = async () => {
-    if (videoViewRef.current) {
-      try {
-        await videoViewRef.current.startPictureInPicture();
-      } catch (e) {
-        console.warn('[VideoPlayer] PiP indisponível:', e);
-      }
-    }
-  };
+  // ─── Prev/Next ───
+  // Sem channel store global; mantém apenas a interação via guia.
+  const audioLanguages = useMemo(() => {
+    return Array.from(new Set(audioTracks.map(t => t.language).filter(Boolean))).slice(0, 3);
+  }, [audioTracks]);
 
   return (
     <View style={styles.container}>
       <StatusBar hidden />
 
-      <TouchableOpacity
+      <Pressable
         style={styles.videoContainer}
-        onPress={handleScreenPress}
-        activeOpacity={1}
+        onPress={() => {
+          if (showMenu || showGuide) return;
+          osdVisible ? hideOSD() : showOSD();
+        }}
+        focusable={false}
+        android_ripple={{ color: 'transparent' }}
       >
-        <VideoView
-          ref={videoViewRef}
-          player={player}
-          style={{ width: Math.max(width, height), height: Math.min(width, height) }}
-          contentFit="contain"
-          nativeControls={false}
-          allowsPictureInPicture
-          allowsFullscreen
-          onPictureInPictureStart={() => {
-            setIsPip(true);
-            setShowControls(false);
-          }}
-          onPictureInPictureStop={() => {
-            setIsPip(false);
-          }}
-        />
+        <View style={styles.video} pointerEvents="none">
+          <Video
+            key={videoKey}
+            ref={videoRef}
+            source={{ uri: activeChannel.url, headers: activeChannel.headers }}
+            drm={drmConfig}
+            style={styles.video}
+            resizeMode="contain"
+            onLoad={onLoad}
+            onError={onError}
+            onAudioTracks={onAudioTracks}
+            onVideoTracks={onVideoTracks}
+            onTextTracks={onTextTracks}
+            onBandwidthUpdate={onBandwidthUpdate}
+            selectedAudioTrack={selectedAudioIdx !== null
+              ? { type: SelectedTrackType.INDEX, value: selectedAudioIdx }
+              : { type: SelectedTrackType.SYSTEM }}
+            selectedVideoTrack={selectedVideoTrackId !== null
+              ? { type: SelectedVideoTrackType.INDEX, value: selectedVideoTrackId }
+              : { type: SelectedVideoTrackType.AUTO }}
+            selectedTextTrack={selectedTextIdx !== null
+              ? { type: SelectedTrackType.INDEX, value: selectedTextIdx }
+              : { type: SelectedTrackType.DISABLED }}
+            bufferConfig={{
+              minBufferMs: 15000,
+              maxBufferMs: 50000,
+              bufferForPlaybackMs: 2500,
+              bufferForPlaybackAfterRebufferMs: 5000,
+            }}
+            controls={false}
+            repeat
+            ignoreSilentSwitch="ignore"
+            playInBackground={false}
+            focusable={false}
+          />
+        </View>
 
-        {/* Error State */}
-        {hasError && !isPip && (
+        {(isLoading || isRetrying) && !hasError && (
+          <View style={styles.loadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="large" color={Colors.primary} />
+            {isRetrying && <Text style={styles.retryingText}>Conectando ao canal...</Text>}
+          </View>
+        )}
+
+        {isCasting && (
+          <View style={styles.castingOverlay}>
+            <MaterialIcons name="cast" size={56} color={Colors.primary} />
+            <Text style={styles.castingTitle}>Transmitindo</Text>
+            <Text style={styles.castingSubtitle}>{activeChannel.name}</Text>
+          </View>
+        )}
+
+        {hasError && (
           <View style={styles.errorContainer}>
             <Ionicons name="alert-circle-outline" size={64} color={Colors.error} />
             <Text style={styles.errorTitle}>Canal indisponível</Text>
             <Text style={styles.errorText}>
-              Este canal está temporariamente fora do ar.{'\n'}
-              Tente novamente mais tarde.
+              Este canal está temporariamente fora do ar.
             </Text>
             <TouchableOpacity style={styles.retryButton} onPress={handleRetry}>
               <Ionicons name="refresh" size={20} color={Colors.text} />
@@ -315,113 +393,237 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
           </View>
         )}
 
-        {/* Controls Overlay */}
-        {showControls && !hasError && !isPip && (
-          <>
-            <LinearGradient
-              colors={['rgba(0,0,0,0.7)', 'transparent', 'transparent', 'rgba(0,0,0,0.7)']}
-              style={styles.gradient}
-            />
-
-            {/* Top Bar */}
-            <View style={[styles.topBar, { paddingTop: insets.top + Spacing.sm }]}>
-              <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-                <Ionicons name="arrow-back" size={28} color={Colors.text} />
-              </TouchableOpacity>
-
-              <View style={styles.channelInfo}>
-                <Text style={styles.channelName}>{activeChannel.name}</Text>
-                <Text style={styles.channelCategory}>{activeChannel.category}</Text>
-              </View>
-
-              {/* Cast Button */}
-              <View style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center', marginRight: 8 }}>
-                 <CastButton style={{ width: 24, height: 24, tintColor: Colors.text }} />
-              </View>
-
-              {/* PIP Button */}
-              {Platform.OS !== 'web' && (
-                <TouchableOpacity
-                    style={[styles.iconButton]}
-                    onPress={handlePip}
-                >
-                    <MaterialIcons name="picture-in-picture-alt" size={24} color={Colors.text} />
-                </TouchableOpacity>
-              )}
-
-              {resolution && (
-                <View style={styles.resolutionBadge}>
-                  <Text style={styles.resolutionText}>{resolution}</Text>
-                </View>
-              )}
-
-              <TouchableOpacity
-                style={[styles.iconButton, showGuide && styles.iconButtonActive]}
-                onPress={handleToggleGuide}
-              >
-                <Ionicons name="list" size={24} color={Colors.text} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.iconButton, favorite && styles.iconButtonFav]}
-                onPress={handleToggleFavorite}
-              >
-                <Ionicons
-                  name={favorite ? 'heart' : 'heart-outline'}
-                  size={24}
-                  color={favorite ? '#FF4757' : Colors.text}
-                />
-              </TouchableOpacity>
+        {/* Top Bar */}
+        {osdVisible && !showMenu && !showGuide && !hasError && (
+          <View style={[styles.topBar, { paddingTop: insets.top + Spacing.sm }]}>
+            <TouchableOpacity style={styles.iconButton} onPress={handleBack}>
+              <Ionicons name="arrow-back" size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }} />
+            <View style={styles.castWrap}>
+              <CastButton style={{ width: 24, height: 24, tintColor: Colors.text }} />
             </View>
+            <TouchableOpacity style={styles.iconButton} onPress={() => setShowGuide(true)}>
+              <Ionicons name="list" size={22} color={Colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconButton} onPress={() => { setMenuPage('main'); setShowMenu(true); }}>
+              <Ionicons name="settings-outline" size={22} color={Colors.text} />
+            </TouchableOpacity>
+          </View>
+        )}
 
-            {/* Bottom Bar - EPG */}
-            <View style={[styles.bottomBar, { paddingBottom: insets.bottom + Spacing.sm }]}>
-              <View style={styles.epgInfo}>
+        {/* OSD Banner */}
+        {osdVisible && !showMenu && !showGuide && !hasError && (
+          <View style={[styles.osdContainer, { bottom: insets.bottom + 24, left: 24, right: 24 }]}>
+            <View style={styles.osdBanner}>
+              <View style={styles.osdLogoCol}>
+                <View style={styles.osdLogoWrap}>
+                  {activeChannel.logo ? (
+                    <Image
+                      source={{ uri: activeChannel.logo }}
+                      style={styles.osdLogo}
+                      contentFit="contain"
+                      cachePolicy="memory-disk"
+                    />
+                  ) : (
+                    <Ionicons name="tv-outline" size={32} color={Colors.textSecondary} />
+                  )}
+                </View>
+                {activeChannel.channelNumber != null && (
+                  <View style={styles.osdChNumBadge}>
+                    <Text style={styles.osdChNum}>{String(activeChannel.channelNumber).padStart(2, '0')}</Text>
+                  </View>
+                )}
+                <Text style={styles.osdChannelName} numberOfLines={1}>{activeChannel.name}</Text>
+              </View>
+
+              <View style={styles.osdDivider} />
+
+              <View style={styles.osdEpgCol}>
+                <View style={styles.osdLiveRow}>
+                  <View style={styles.osdCatPill}>
+                    <Text style={styles.osdCatText}>{activeChannel.category}</Text>
+                  </View>
+                  {videoResolution && (
+                    <View style={styles.osdResBadge}>
+                      <Text style={styles.osdResText}>{videoResolution}</Text>
+                    </View>
+                  )}
+                  {audioLanguages.map((lang) => (
+                    <View key={`aud-${lang}`} style={styles.osdAudBadge}>
+                      <Ionicons name="volume-medium" size={11} color={Colors.text} />
+                      <Text style={styles.osdAudText}>{lang}</Text>
+                    </View>
+                  ))}
+                  {textTracks.length > 0 && (
+                    <View style={styles.osdCcBadge}>
+                      <Ionicons name="logo-closed-captioning" size={12} color={Colors.text} />
+                      <Text style={styles.osdCcText}>CC</Text>
+                    </View>
+                  )}
+                  {epg?.remaining ? (
+                    <Text style={styles.osdRemaining}>{formatRemaining(epg.remaining)}</Text>
+                  ) : null}
+                </View>
+
                 {epg?.current ? (
                   <>
-                    <View style={styles.liveRow}>
-                      <View style={styles.liveIndicator}>
-                        <View style={styles.liveDot} />
-                        <Text style={styles.liveText}>AO VIVO</Text>
-                      </View>
-                      <Text style={styles.remainingText}>
-                        {formatRemaining(epg.remaining)}
+                    <View style={styles.osdProgTitleRow}>
+                      <Text style={styles.osdProgTitle} numberOfLines={1}>{epg.current.title}</Text>
+                      <Text style={styles.osdProgTime}>
+                        {formatTime(epg.current.startTime)}{' – '}{formatTime(epg.current.endTime)}
                       </Text>
                     </View>
-                    <Text style={styles.programTitle} numberOfLines={1}>
-                      {epg.current.title}
-                    </Text>
-                    <View style={styles.progressBar}>
-                      <View
-                        style={[styles.progressFill, { width: `${epg.progress}%` }]}
-                      />
+                    {epg.current.description ? (
+                      <Text style={styles.osdProgDesc} numberOfLines={2}>{epg.current.description}</Text>
+                    ) : null}
+                    <View style={styles.osdProgBar}>
+                      <View style={[styles.osdProgFill, { width: `${Math.min(100, epg.progress ?? 0)}%` }]} />
                     </View>
                     {epg.next && (
-                      <View style={styles.nextContainer}>
-                        <Text style={styles.nextLabel}>A seguir:</Text>
-                        <Text style={styles.nextProgram} numberOfLines={1}>
-                          {epg.next.title}
-                        </Text>
+                      <View style={styles.osdNextRow}>
+                        <Ionicons name="chevron-forward" size={13} color={Colors.textMuted} />
+                        <Text style={styles.osdNextTitle} numberOfLines={1}>{epg.next.title}</Text>
+                        <Text style={styles.osdNextTime}>{formatTime(epg.next.startTime)}</Text>
                       </View>
                     )}
                   </>
                 ) : (
-                  <>
-                    <View style={styles.liveIndicator}>
-                      <View style={styles.liveDot} />
-                      <Text style={styles.liveText}>AO VIVO</Text>
-                    </View>
-                    <Text style={styles.programTitle}>{activeChannel.name}</Text>
-                  </>
+                  <Text style={styles.osdNoEpg}>Sem informação de programação</Text>
                 )}
               </View>
+
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={handleToggleFavorite}
+              >
+                <Ionicons
+                  name={favorite ? 'heart' : 'heart-outline'}
+                  size={22}
+                  color={favorite ? '#FF4757' : Colors.text}
+                />
+              </TouchableOpacity>
             </View>
-          </>
+          </View>
         )}
+      </Pressable>
 
-      </TouchableOpacity>
+      {/* Menu */}
+      {showMenu && !showGuide && (
+        <Pressable style={styles.menuOverlay} onPress={() => setShowMenu(false)}>
+          <Pressable style={styles.menuCard} onPress={e => e.stopPropagation()}>
+            <View style={styles.menuHeader}>
+              <Text style={styles.menuChannelName} numberOfLines={1}>{activeChannel.name}</Text>
+              {menuPage !== 'main' && (
+                <TouchableOpacity style={styles.menuBackButton} onPress={() => setMenuPage('main')}>
+                  <Ionicons name="chevron-back" size={18} color={Colors.text} />
+                </TouchableOpacity>
+              )}
+            </View>
+            <View style={styles.menuSeparator} />
 
-      {/* EPG Guide Modal — same component used from the main tab */}
+            {menuPage === 'main' && (
+              <>
+                <TouchableOpacity style={styles.menuItem} onPress={() => { handleToggleFavorite(); setShowMenu(false); }}>
+                  <Ionicons name={favorite ? 'heart' : 'heart-outline'} size={20} color={favorite ? '#FF4757' : Colors.text} />
+                  <Text style={styles.menuItemText}>{favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.menuItem} onPress={() => { setShowGuide(true); setShowMenu(false); }}>
+                  <Ionicons name="calendar-outline" size={20} color={Colors.text} />
+                  <Text style={styles.menuItemText}>Guia de Programação</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.menuItem, audioTracks.length === 0 && styles.menuItemDisabled]}
+                  disabled={audioTracks.length === 0}
+                  onPress={() => setMenuPage('audio')}
+                >
+                  <Ionicons name="musical-notes-outline" size={20} color={Colors.text} />
+                  <Text style={styles.menuItemText}>
+                    Áudio{selectedAudioIdx !== null && audioTracks[selectedAudioIdx] ? ` · ${audioTracks[selectedAudioIdx].language ?? selectedAudioIdx + 1}` : ' · Padrão'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.menuItem, videoTracks.length === 0 && styles.menuItemDisabled]}
+                  disabled={videoTracks.length === 0}
+                  onPress={() => setMenuPage('video')}
+                >
+                  <Ionicons name="layers-outline" size={20} color={Colors.text} />
+                  <Text style={styles.menuItemText}>
+                    Qualidade{selectedVideoTrackId !== null
+                      ? (() => {
+                          const t = videoTracks.find(v => v.trackId === selectedVideoTrackId);
+                          return t ? ` · ${t.height ? t.height + 'p' : 'Manual'}` : '';
+                        })()
+                      : ' · Auto'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.menuItem, textTracks.length === 0 && styles.menuItemDisabled]}
+                  disabled={textTracks.length === 0}
+                  onPress={() => setMenuPage('cc')}
+                >
+                  <Ionicons name="logo-closed-captioning" size={20} color={Colors.text} />
+                  <Text style={styles.menuItemText}>
+                    Legendas{selectedTextIdx !== null && textTracks[selectedTextIdx] ? ` · ${textTracks[selectedTextIdx].language ?? selectedTextIdx + 1}` : ' · Off'}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {menuPage === 'audio' && audioTracks.map((track: any, i: number) => (
+              <TouchableOpacity
+                key={i}
+                style={styles.menuItem}
+                onPress={() => { setSelectedAudioIdx(i); setMenuPage('main'); }}
+              >
+                <Ionicons
+                  name={selectedAudioIdx === i ? 'radio-button-on' : 'radio-button-off'}
+                  size={18}
+                  color={Colors.text}
+                />
+                <Text style={styles.menuItemText}>{track.language ?? track.title ?? `Faixa ${i + 1}`}</Text>
+              </TouchableOpacity>
+            ))}
+
+            {menuPage === 'video' && [null, ...videoTracks].map((track: any, i: number) => {
+              const label = i === 0 ? 'Automático' : track?.height ? `${track.height}p` : `Qualidade ${i}`;
+              const isActive = i === 0 ? selectedVideoTrackId === null : track?.trackId === selectedVideoTrackId;
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setSelectedVideoTrackId(i === 0 ? null : track?.trackId ?? null);
+                    setMenuPage('main');
+                  }}
+                >
+                  <Ionicons name={isActive ? 'radio-button-on' : 'radio-button-off'} size={18} color={Colors.text} />
+                  <Text style={styles.menuItemText}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+
+            {menuPage === 'cc' && [null, ...textTracks].map((track: any, i: number) => {
+              const label = i === 0 ? 'Desativado' : track?.language ?? track?.title ?? `Legenda ${i}`;
+              const isActive = i === 0 ? selectedTextIdx === null : selectedTextIdx === i - 1;
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={styles.menuItem}
+                  onPress={() => {
+                    setSelectedTextIdx(i === 0 ? null : i - 1);
+                    setMenuPage('main');
+                  }}
+                >
+                  <Ionicons name={isActive ? 'radio-button-on' : 'radio-button-off'} size={18} color={Colors.text} />
+                  <Text style={styles.menuItemText}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      )}
+
       <EPGGuideModal
         visible={showGuide}
         onClose={() => setShowGuide(false)}
@@ -432,185 +634,134 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  videoContainer: {
-    flex: 1,
+  container: { flex: 1, backgroundColor: '#000' },
+  videoContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  video: { width: '100%', height: '100%' },
+  loadingOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', gap: 12 },
+  retryingText: { color: Colors.textSecondary, fontSize: Typography.body.fontSize, fontWeight: '500' },
+  castingOverlay: {
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#000',
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    gap: Spacing.sm,
   },
-  gradient: {
-    ...StyleSheet.absoluteFillObject,
-  },
+  castingTitle: { color: Colors.text, fontSize: Typography.h2.fontSize, fontWeight: '700' },
+  castingSubtitle: { color: Colors.textSecondary, fontSize: Typography.body.fontSize },
   errorContainer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.95)',
     padding: Spacing.xxl,
+    gap: Spacing.md,
   },
-  errorTitle: {
-    color: Colors.text,
-    fontSize: Typography.h2.fontSize,
-    fontWeight: '700',
-    marginTop: Spacing.lg,
-    marginBottom: Spacing.sm,
-  },
-  errorText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.body.fontSize,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: Spacing.xl,
-  },
+  errorTitle: { color: Colors.text, fontSize: Typography.h2.fontSize, fontWeight: '700' },
+  errorText: { color: Colors.textSecondary, fontSize: Typography.body.fontSize, textAlign: 'center' },
   retryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
     backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
     borderRadius: BorderRadius.lg,
+  },
+  retryText: { color: Colors.text, fontWeight: '600' },
+  backButtonError: { padding: Spacing.md },
+  backButtonText: { color: Colors.textSecondary },
+
+  topBar: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Spacing.lg, paddingBottom: Spacing.sm,
     gap: Spacing.sm,
   },
-  retryText: {
-    color: Colors.text,
-    fontWeight: '600',
-    fontSize: Typography.body.fontSize,
-  },
-  backButtonError: {
-    marginTop: Spacing.lg,
-    paddingVertical: Spacing.md,
-  },
-  backButtonText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.body.fontSize,
-  },
-  topBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.sm,
-  },
-  backButton: {
-    padding: Spacing.sm,
-    marginRight: Spacing.sm,
-  },
-  channelInfo: {
-    flex: 1,
-  },
-  channelName: {
-    color: Colors.text,
-    fontSize: Typography.h3.fontSize,
-    fontWeight: '600',
-  },
-  channelCategory: {
-    color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
-  },
   iconButton: {
-    padding: Spacing.sm,
-    marginLeft: Spacing.sm,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    width: 40, height: 40,
+    backgroundColor: 'rgba(0,0,0,0.4)',
     borderRadius: BorderRadius.full,
+    justifyContent: 'center', alignItems: 'center',
   },
-  iconButtonActive: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
+  castWrap: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+
+  osdContainer: { position: 'absolute' },
+  osdBanner: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(6,6,18,0.94)',
+    borderRadius: 16, borderWidth: 1, borderColor: 'rgba(99,102,241,0.32)',
+    paddingVertical: Spacing.md, paddingHorizontal: Spacing.lg,
+    gap: Spacing.lg, minHeight: 100,
   },
-  iconButtonFav: {
-    backgroundColor: 'rgba(255, 71, 87, 0.2)',
-  },
-  resolutionBadge: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    marginLeft: Spacing.sm,
-  },
-  resolutionText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.sm,
-  },
-  epgInfo: {
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-  },
-  liveRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.xs,
-  },
-  liveIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.live,
-    marginRight: Spacing.xs,
-  },
-  liveText: {
-    color: Colors.live,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  remainingText: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-  },
-  programTitle: {
-    color: Colors.text,
-    fontSize: Typography.bodyLarge.fontSize,
-    fontWeight: '600',
-    marginBottom: Spacing.sm,
-  },
-  progressBar: {
-    height: 4,
-    backgroundColor: Colors.progressBg,
-    borderRadius: BorderRadius.xs,
+  osdLogoCol: { alignItems: 'center', gap: Spacing.xs, flexShrink: 0, width: 96 },
+  osdLogoWrap: {
+    width: 88, height: 56, backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: BorderRadius.md, justifyContent: 'center', alignItems: 'center',
     overflow: 'hidden',
-    marginBottom: Spacing.sm,
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: Colors.progressFill,
+  osdLogo: { width: '82%', height: '82%' },
+  osdChNumBadge: {
+    backgroundColor: 'rgba(99,102,241,0.18)', borderRadius: BorderRadius.sm,
+    paddingHorizontal: Spacing.sm, paddingVertical: 2,
+    borderWidth: 1, borderColor: 'rgba(99,102,241,0.38)',
   },
-  nextContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
+  osdChNum: { color: Colors.primaryLight, fontSize: 14, fontWeight: '800', letterSpacing: 1 },
+  osdChannelName: { color: Colors.text, fontSize: 12, fontWeight: '700', textAlign: 'center', maxWidth: 100 },
+  osdDivider: { width: 1, alignSelf: 'stretch', backgroundColor: 'rgba(255,255,255,0.08)' },
+  osdEpgCol: { flex: 1, gap: 6, justifyContent: 'center' },
+  osdLiveRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, flexWrap: 'wrap' },
+  osdCatPill: {
+    backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: BorderRadius.full,
+    paddingHorizontal: Spacing.sm, paddingVertical: 2,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
-  nextLabel: {
-    color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
-    fontWeight: '600',
+  osdCatText: { color: Colors.textSecondary, fontSize: 11, fontWeight: '500' },
+  osdResBadge: {
+    backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: BorderRadius.sm,
+    paddingHorizontal: 8, paddingVertical: 2,
   },
-  nextProgram: {
-    color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
-    flex: 1,
+  osdResText: { color: Colors.text, fontSize: 10, fontWeight: '700' },
+  osdAudBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: BorderRadius.sm,
+    paddingHorizontal: 6, paddingVertical: 2,
   },
+  osdAudText: { color: Colors.text, fontSize: 10, fontWeight: '600' },
+  osdCcBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: BorderRadius.sm,
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  osdCcText: { color: Colors.text, fontSize: 10, fontWeight: '700' },
+  osdRemaining: { color: Colors.textMuted, fontSize: 11, marginLeft: 'auto' },
+  osdProgTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  osdProgTitle: { color: Colors.text, fontSize: Typography.body.fontSize, fontWeight: '600', flex: 1 },
+  osdProgTime: { color: Colors.textMuted, fontSize: 11, fontVariant: ['tabular-nums'] },
+  osdProgDesc: { color: Colors.textSecondary, fontSize: 12, lineHeight: 16 },
+  osdProgBar: { height: 3, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' },
+  osdProgFill: { height: '100%', backgroundColor: Colors.primary },
+  osdNextRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  osdNextTitle: { color: Colors.textMuted, fontSize: 11, flex: 1 },
+  osdNextTime: { color: Colors.textMuted, fontSize: 11 },
+  osdNoEpg: { color: Colors.textMuted, fontSize: 12 },
+
+  menuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center', alignItems: 'center',
+    zIndex: 200,
+  },
+  menuCard: {
+    width: 340, maxHeight: '80%',
+    backgroundColor: 'rgba(8,8,20,0.98)',
+    borderRadius: 16, borderWidth: 1, borderColor: 'rgba(99,102,241,0.32)',
+    overflow: 'hidden',
+  },
+  menuHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.lg },
+  menuChannelName: { flex: 1, color: Colors.text, fontSize: Typography.h3.fontSize, fontWeight: '700' },
+  menuBackButton: { padding: 6, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.08)' },
+  menuSeparator: { height: 1, backgroundColor: 'rgba(255,255,255,0.07)' },
+  menuItem: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+  },
+  menuItemDisabled: { opacity: 0.4 },
+  menuItemText: { flex: 1, color: Colors.text, fontSize: Typography.body.fontSize },
 });

@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEFAULT_PIN = '1234';
 
-interface SettingsStore {
+export interface SettingsStore {
     // PIN e controle adulto
     adultPin: string;
     adultUnlocked: boolean;

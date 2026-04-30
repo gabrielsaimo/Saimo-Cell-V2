@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import type { Channel, CategoryId } from '../types';
 import { channels, adultChannels, categoryOrder, getChannelsByCategory } from '../data/channels';
+import { registerChannel } from '../services/epgService';
+
+function sortKey(s: string): string {
+    return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
 
 interface ChannelStore {
     // Estado
@@ -56,7 +61,9 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
         try {
             set({ isLoading: true });
             const res = await fetch('https://raw.githubusercontent.com/gabrielsaimo/Saimo-TV/main/public/data/lista_pro.json');
-            const data = await res.json();
+            const data: Channel[] = await res.json();
+            // Register all pro channels with EPG service for name-based matching
+            data.forEach(ch => registerChannel(ch.id, ch.name));
             set({ proChannels: data, isLoading: false });
         } catch (error) {
             console.error('Failed to fetch pro channels:', error);
@@ -70,9 +77,23 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
         // Base de canais
         let allChs: Channel[] = [];
         if (isProList) {
-            allChs = includeAdult
+            const base = includeAdult
                 ? proChannels
                 : proChannels.filter(ch => ch.category !== 'ADULTOS' && ch.category !== 'Adulto');
+            // Sort pro channels: by channelNumber if present, else by category+name
+            const proCatOrder = Array.from(new Set(base.map(ch => ch.category)));
+            allChs = [...base].sort((a, b) => {
+                const ai = proCatOrder.indexOf(a.category);
+                const bi = proCatOrder.indexOf(b.category);
+                if (ai !== bi) return ai - bi;
+                const an = a.channelNumber ?? 99999;
+                const bn = b.channelNumber ?? 99999;
+                if (an !== bn) return an - bn;
+                const ka = sortKey(a.name), kb = sortKey(b.name);
+                if (ka < kb) return -1;
+                if (ka > kb) return 1;
+                return 0;
+            });
         } else {
             allChs = includeAdult
                 ? [...channels, ...adultChannels]

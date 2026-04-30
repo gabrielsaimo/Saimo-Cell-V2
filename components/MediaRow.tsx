@@ -62,13 +62,8 @@ const MediaRow = memo(({ title, categoryId, items, onSeeAll }: MediaRowProps) =>
         renderItem={({ item }) => (
           <MediaCard item={item} size="medium" />
         )}
-        estimatedItemSize={CARD_WIDTH + Spacing.sm}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: Spacing.lg }}
-        initialNumToRender={5}
-        maxToRenderPerBatch={5}
-        windowSize={5}
-
         removeClippedSubviews
       />
     </View>

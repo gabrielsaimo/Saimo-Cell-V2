@@ -1,40 +1,50 @@
-import React, { memo, useCallback, useState, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
+import React, { memo, useCallback, useState, useEffect, useRef, useMemo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
   Dimensions,
+  Modal,
+  Alert,
+  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import type { Channel, CurrentProgram } from '../types';
 import { Colors, BorderRadius, Spacing, Typography, Shadows } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
-import { useSettingsStore } from '../stores/settingsStore';
+import { useSettingsStore, type SettingsStore } from '../stores/settingsStore';
 import { getCurrentProgram, onEPGUpdate } from '../services/epgService';
 
 interface ChannelCardProps {
   channel: Channel;
 }
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 const CARD_WIDTH = (width - Spacing.lg * 3) / 2;
+
+// Stable selectors to prevent unnecessary re-renders
+const selectShowEPG = (state: SettingsStore) => state.showEPG;
+const selectShowChannelNumber = (state: SettingsStore) => state.showChannelNumber;
 
 const ChannelCard = memo(({ channel }: ChannelCardProps) => {
   const router = useRouter();
   const { toggleFavorite, isFavorite } = useFavoritesStore();
-  const showEPG = useSettingsStore(state => state.showEPG);
-  const showChannelNumber = useSettingsStore(state => state.showChannelNumber);
-  
+  const showEPG = useSettingsStore(selectShowEPG);
+  const showChannelNumber = useSettingsStore(selectShowChannelNumber);
+  const client = useRemoteMediaClient();
+
   const [favorite, setFavorite] = useState(isFavorite(channel.id));
   const [currentEPG, setCurrentEPG] = useState<CurrentProgram | null>(null);
+  const [showOptions, setShowOptions] = useState(false);
   const isMountedRef = useRef(true);
 
   // Carrega EPG do cache e escuta atualizações (prefetch feito pelo index.tsx)
+  // Remove interval per card - shared listener in EPG service handles updates
   useEffect(() => {
     isMountedRef.current = true;
 
@@ -49,42 +59,76 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
       }
     });
 
-    // Atualiza progresso do programa a cada 60 segundos
-    const interval = setInterval(() => {
-      if (isMountedRef.current && showEPG) {
-        setCurrentEPG(getCurrentProgram(channel.id));
-      }
-    }, 60000);
-
     return () => {
       isMountedRef.current = false;
       unsubscribe();
-      clearInterval(interval);
     };
   }, [channel.id, showEPG]);
 
   // Sincroniza estado de favorito
   useEffect(() => {
     setFavorite(isFavorite(channel.id));
-  }, [isFavorite, channel.id]);
+  }, [channel.id, isFavorite]);
 
   const handlePress = useCallback(() => {
-    // Navegação imediata
     router.push({
       pathname: '/player/[id]',
-      params: { id: channel.id }
+      params: {
+        id: channel.id,
+        url: channel.url,
+        name: channel.name,
+        category: channel.category,
+        logo: channel.logo ?? '',
+        channelNumber: channel.channelNumber ?? '',
+      },
     });
   }, [channel.id, router]);
 
+  const handleLongPress = useCallback(() => {
+    setShowOptions(true);
+  }, []);
+
+  const handleOptionOpen = useCallback(() => {
+    setShowOptions(false);
+    router.push({ pathname: '/player/[id]', params: { id: channel.id } });
+  }, [channel.id, router]);
+
+  const handleOptionCast = useCallback(() => {
+    setShowOptions(false);
+    if (!client) {
+      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Abra o menu Cast e conecte um Chromecast.');
+      return;
+    }
+    client.loadMedia({
+      mediaInfo: {
+        contentUrl: channel.url,
+        metadata: {
+          type: 'movie',
+          title: channel.name,
+          images: channel.logo ? [{ url: channel.logo }] : [],
+        },
+      },
+      autoplay: true,
+    });
+  }, [client, channel]);
+
+  const handleOptionFavorite = useCallback(() => {
+    setShowOptions(false);
+    toggleFavorite(channel.id);
+    setFavorite((prev: boolean) => !prev);
+  }, [channel.id, toggleFavorite]);
+
   const handleFavorite = useCallback(() => {
     toggleFavorite(channel.id);
-    setFavorite(prev => !prev);
+    setFavorite((prev: boolean) => !prev);
   }, [channel.id, toggleFavorite]);
 
   return (
     <TouchableOpacity
       style={styles.container}
       onPress={handlePress}
+      onLongPress={handleLongPress}
+      delayLongPress={600}
       activeOpacity={0.7}
     >
       <View style={styles.imageContainer}>
@@ -93,8 +137,10 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
             source={{ uri: channel.logo }}
             style={styles.logo}
             contentFit="contain"
-            transition={200}
+            transition={0}
             cachePolicy="memory-disk"
+            recyclingKey={channel.logo}
+            priority={Platform.OS === 'android' ? 'high' : undefined}
           />
         ) : (
           <View style={styles.placeholder}>
@@ -103,10 +149,7 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
           </View>
         )}
         
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.8)']}
-          style={styles.gradient}
-        />
+        <View style={styles.gradient} />
 
         {/* Número do canal */}
         {showChannelNumber && channel.channelNumber && (
@@ -163,9 +206,58 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
           </View>
         )}
       </View>
+
+      {/* Long Press Action Sheet */}
+      <Modal
+        visible={showOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowOptions(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          onPress={() => setShowOptions(false)}
+          activeOpacity={1}
+        >
+          <View style={styles.actionSheet}>
+            <View style={styles.actionSheetHandle} />
+            <Text style={styles.actionSheetTitle} numberOfLines={1}>
+              {channel.name}
+            </Text>
+
+            <TouchableOpacity style={styles.actionItem} onPress={handleOptionOpen}>
+              <Ionicons name="play-circle-outline" size={24} color={Colors.text} />
+              <Text style={styles.actionItemText}>Abrir</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionItem} onPress={handleOptionCast}>
+              <MaterialIcons name="cast" size={24} color={Colors.text} />
+              <Text style={styles.actionItemText}>Transmitir</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionItem} onPress={handleOptionFavorite}>
+              <Ionicons
+                name={favorite ? 'heart' : 'heart-outline'}
+                size={24}
+                color={favorite ? '#FF4757' : Colors.text}
+              />
+              <Text style={styles.actionItemText}>
+                {favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionItem, styles.cancelItem]}
+              onPress={() => setShowOptions(false)}
+            >
+              <Text style={styles.cancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </TouchableOpacity>
   );
-}, (prevProps, nextProps) => {
+}, (prevProps: ChannelCardProps, nextProps: ChannelCardProps) => {
   return prevProps.channel.id === nextProps.channel.id;
 });
 
@@ -176,7 +268,6 @@ const styles = StyleSheet.create({
     width: CARD_WIDTH,
     backgroundColor: Colors.cardBg,
     borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
     ...Shadows.md,
   },
   imageContainer: {
@@ -185,6 +276,9 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+    borderTopLeftRadius: BorderRadius.lg,
+    borderTopRightRadius: BorderRadius.lg,
   },
   logo: {
     width: '70%',
@@ -206,6 +300,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     height: '50%',
+    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   numberBadge: {
     position: 'absolute',
@@ -265,7 +360,6 @@ const styles = StyleSheet.create({
     color: Colors.live,
     fontSize: 9,
     fontWeight: '700',
-    letterSpacing: 0.5,
   },
   remainingText: {
     color: Colors.textSecondary,
@@ -287,6 +381,57 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: Colors.progressFill,
     borderRadius: BorderRadius.xs,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  actionSheet: {
+    backgroundColor: Colors.cardBg,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    paddingBottom: Spacing.xl,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+  },
+  actionSheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.textSecondary,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: Spacing.md,
+    opacity: 0.4,
+  },
+  actionSheetTitle: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
+    marginBottom: Spacing.md,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.surface,
+  },
+  actionItemText: {
+    color: Colors.text,
+    fontSize: Typography.body.fontSize,
+  },
+  cancelItem: {
+    justifyContent: 'center',
+    marginTop: Spacing.sm,
+  },
+  cancelText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.body.fontSize,
+    fontWeight: '600',
+    textAlign: 'center',
+    flex: 1,
   },
 });
 

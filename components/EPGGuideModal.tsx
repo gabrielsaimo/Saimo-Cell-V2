@@ -8,11 +8,11 @@ import {
   FlatList,
   ScrollView,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 
 import type { Channel, CurrentProgram } from '../types';
@@ -69,7 +69,10 @@ const EPGRow = React.memo(({ channel, onPress }: EPGRowProps) => {
           source={{ uri: channel.logo }}
           style={rowStyles.logo}
           contentFit="contain"
+          transition={0}
           cachePolicy="memory-disk"
+          recyclingKey={channel.logo}
+          priority={Platform.OS === 'android' ? 'high' : undefined}
         />
       </View>
 
@@ -189,7 +192,6 @@ const rowStyles = StyleSheet.create({
     color: Colors.live,
     fontSize: 9,
     fontWeight: '700',
-    letterSpacing: 0.5,
   },
   programTitle: {
     color: Colors.text,
@@ -305,7 +307,7 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType={Platform.select({ android: 'fade', ios: 'slide' })}
       transparent
       statusBarTranslucent
       onRequestClose={onClose}
@@ -328,12 +330,12 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
           {/* Drag handle */}
           <View style={styles.handle} />
 
-          {/* Header */}
-          <LinearGradient
-            colors={[Colors.primaryDark + 'CC', Colors.surface]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.headerGradient}
+          {/* Header - Use solid background instead of gradient for performance */}
+          <View
+            style={[
+              styles.headerGradient,
+              { backgroundColor: Colors.primaryDark },
+            ]}
           >
             <View style={styles.header}>
               <View style={styles.headerLeft}>
@@ -355,7 +357,7 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
                 <Ionicons name="close" size={20} color={Colors.text} />
               </TouchableOpacity>
             </View>
-          </LinearGradient>
+          </View>
 
           {/* Category pills */}
           <ScrollView
@@ -390,10 +392,15 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
             keyExtractor={keyExtractor}
             renderItem={renderItem}
             showsVerticalScrollIndicator={false}
-            initialNumToRender={normalCount}
-            maxToRenderPerBatch={20}
-            windowSize={10}
-            removeClippedSubviews
+            initialNumToRender={Platform.select({ android: 10, ios: normalCount })}
+            maxToRenderPerBatch={Platform.select({ android: 10, ios: 20 })}
+            windowSize={Platform.select({ android: 5, ios: 10 })}
+            removeClippedSubviews={Platform.OS === 'android'}
+            contentContainerStyle={{ paddingBottom: insets.bottom }}
+            maintainVisibleContentPosition={{
+              minIndexForVisible: 0,
+              autoscrollToTopThreshold: 10,
+            }}
             ListEmptyComponent={
               <View style={styles.empty}>
                 <Ionicons
@@ -447,6 +454,8 @@ const styles = StyleSheet.create({
   headerGradient: {
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   header: {
     flexDirection: 'row',

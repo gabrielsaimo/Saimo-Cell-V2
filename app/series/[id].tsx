@@ -1,23 +1,25 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
+import {
+  View,
+  Text,
+  StyleSheet,
   ScrollView,
   StatusBar,
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
   FlatList,
+  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
-import { getSeriesById } from '../../services/mediaService';
+import { getItemAPI } from '../../services/apiService';
 import { useMediaStore } from '../../stores/mediaStore';
 import type { SeriesItem, Episode, CastMember } from '../../types';
 
@@ -33,6 +35,7 @@ export default function SeriesDetailScreen() {
   const [selectedSeason, setSelectedSeason] = useState<string>('1');
   
   const { isFavorite, addFavorite, removeFavorite, getSeriesProgress, setSeriesProgress } = useMediaStore();
+  const castClient = useRemoteMediaClient();
   const [favorite, setFavorite] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
 
@@ -40,22 +43,22 @@ export default function SeriesDetailScreen() {
   useEffect(() => {
     async function load() {
       if (!id) return;
-      const item = await getSeriesById(id);
-      setSeries(item);
-      
-      // Se tiver progresso, selecionar a temporada correta
-      const progress = getSeriesProgress(id);
-      if (progress) {
-        setSelectedSeason(progress.season.toString());
+      try {
+        const item = await getItemAPI(id);
+        setSeries(item as any);
+        setFavorite(isFavorite(id));
+        const progress = getSeriesProgress(id);
+        if (progress) setSelectedSeason(progress.season.toString());
+      } catch (e) {
+        console.warn('[SeriesDetail] Erro ao carregar:', id, e);
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
     }
     load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]); // Removido isFavorite e getSeriesProgress das dependências para evitar loop
+  }, [id]);
 
-  // Atualizar estado de favorito separadamente
   const isFav = isFavorite(id as string);
   useEffect(() => {
     setFavorite(isFav);
@@ -94,12 +97,41 @@ export default function SeriesDetailScreen() {
   const handlePlayEpisode = useCallback((ep: Episode, season: string) => {
     if (!series) return;
     setSeriesProgress(series.id, parseInt(season), ep.episode, ep.id);
+
+    // Descobre o próximo episódio (mesmo season ou próximo season)
+    const seasonEps = series.episodes[season] || [];
+    const currentIndex = seasonEps.findIndex(e => e.id === ep.id);
+    let nextEp: Episode | null = null;
+    let nextSeason = season;
+
+    if (currentIndex >= 0 && currentIndex < seasonEps.length - 1) {
+      nextEp = seasonEps[currentIndex + 1];
+    } else {
+      // Tenta avançar para próxima temporada
+      const seasonNums = Object.keys(series.episodes).sort((a, b) => parseInt(a) - parseInt(b));
+      const seasonIdx = seasonNums.indexOf(season);
+      if (seasonIdx >= 0 && seasonIdx < seasonNums.length - 1) {
+        nextSeason = seasonNums[seasonIdx + 1];
+        const nextSeasonEps = series.episodes[nextSeason] || [];
+        if (nextSeasonEps.length > 0) nextEp = nextSeasonEps[0];
+      }
+    }
+
     router.push({
       pathname: '/media-player/[id]' as any,
       params: {
         id: ep.id,
         url: encodeURIComponent(ep.url),
-        title: `${series.name} - T${season} E${ep.episode}`
+        title: `${series.name} - T${season} E${ep.episode}`,
+        seriesId: series.id,
+        season,
+        ...(nextEp && {
+          nextId: nextEp.id,
+          nextUrl: encodeURIComponent(nextEp.url),
+          nextTitle: `${series.name} - T${nextSeason} E${nextEp.episode}`,
+          nextSeason,
+          nextEpisode: String(nextEp.episode),
+        }),
       }
     });
   }, [series, router, setSeriesProgress]);
@@ -112,6 +144,25 @@ export default function SeriesDetailScreen() {
       handlePlayEpisode(ep, progress.season.toString());
     }
   }, [series, progress, handlePlayEpisode]);
+
+  const handleCastEpisode = useCallback((ep: Episode, season: string) => {
+    if (!series) return;
+    if (!castClient) {
+      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Conecte um Chromecast antes de transmitir.');
+      return;
+    }
+    castClient.loadMedia({
+      mediaInfo: {
+        contentUrl: ep.url,
+        metadata: {
+          type: 'tvShow',
+          title: `${series.name} - T${season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ''}`,
+          images: series.tmdb?.poster ? [{ url: series.tmdb.poster }] : [],
+        },
+      },
+      autoplay: true,
+    });
+  }, [series, castClient]);
 
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({
@@ -219,16 +270,31 @@ export default function SeriesDetailScreen() {
             </TouchableOpacity>
           )}
           
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.iconButton, favorite && styles.iconButtonActive]}
             onPress={handleFavorite}
           >
-            <Ionicons 
-              name={favorite ? 'heart' : 'heart-outline'} 
-              size={24} 
-              color={favorite ? '#FF4757' : Colors.text} 
+            <Ionicons
+              name={favorite ? 'heart' : 'heart-outline'}
+              size={24}
+              color={favorite ? '#FF4757' : Colors.text}
             />
           </TouchableOpacity>
+
+          {castClient && (
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={() => {
+                const ep = progress
+                  ? series.episodes[progress.season.toString()]?.find(e => e.episode === progress.episode)
+                  : episodes[0];
+                const s = progress ? progress.season.toString() : selectedSeason;
+                if (ep) handleCastEpisode(ep, s);
+              }}
+            >
+              <MaterialIcons name="cast" size={24} color={Colors.text} />
+            </TouchableOpacity>
+          )}
         </View>
         
         {/* Sinopse */}
@@ -323,27 +389,42 @@ export default function SeriesDetailScreen() {
             Episódios ({episodes.length})
           </Text>
           {episodes.map((ep) => (
-            <TouchableOpacity
+            <View
               key={ep.id}
               style={[
                 styles.episodeCard,
                 progress?.episodeId === ep.id && styles.episodeCardActive
               ]}
-              onPress={() => handlePlayEpisode(ep, selectedSeason)}
             >
-              <View style={styles.episodeNumber}>
+              <TouchableOpacity
+                style={styles.episodeNumber}
+                onPress={() => handlePlayEpisode(ep, selectedSeason)}
+              >
                 <Text style={styles.episodeNumberText}>{ep.episode}</Text>
-              </View>
-              <View style={styles.episodeInfo}>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.episodeInfo}
+                onPress={() => handlePlayEpisode(ep, selectedSeason)}
+              >
                 <Text style={styles.episodeName} numberOfLines={1}>
                   {ep.name || `Episódio ${ep.episode}`}
                 </Text>
                 {progress?.episodeId === ep.id && (
                   <Text style={styles.episodeContinue}>Continuar assistindo</Text>
                 )}
-              </View>
-              <Ionicons name="play-circle" size={32} color={Colors.primary} />
-            </TouchableOpacity>
+              </TouchableOpacity>
+              {castClient && (
+                <TouchableOpacity
+                  onPress={() => handleCastEpisode(ep, selectedSeason)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons name="cast" size={22} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => handlePlayEpisode(ep, selectedSeason)}>
+                <Ionicons name="play-circle" size={32} color={Colors.primary} />
+              </TouchableOpacity>
+            </View>
           ))}
         </View>
         

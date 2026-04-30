@@ -1,27 +1,28 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
   ScrollView,
   StatusBar,
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
-  FlatList,
+  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
-import { getMediaById } from '../../services/mediaService';
+import { getItemAPI } from '../../services/apiService';
 import { useMediaStore } from '../../stores/mediaStore';
 import type { MediaItem, CastMember } from '../../types';
 
-const { width, height } = Dimensions.get('window');
+const { height } = Dimensions.get('window');
 
 // Cor da classificação
 const getCertColor = (cert?: string) => {
@@ -45,9 +46,8 @@ export default function MediaDetailScreen() {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
 
   const { isFavorite, addFavorite, removeFavorite, addToHistory } = useMediaStore();
+  const castClient = useRemoteMediaClient();
   const [favorite, setFavorite] = useState(false);
-
-  const params = useLocalSearchParams();
 
   useEffect(() => {
     let isMounted = true;
@@ -55,37 +55,16 @@ export default function MediaDetailScreen() {
     async function load() {
       if (!id) return;
       setLoading(true);
-      
-      let item = await getMediaById(id);
-
-      // Fallback: Construct partial item from params if not found in catalog
-      if (!item && params.title) {
-        item = {
-            id: id,
-            name: params.title as string,
-            url: '', // No URL available yet
-            category: '',
-            isAdult: false,
-            type: 'movie',
-            tmdb: {
-                id: 0,
-                title: params.title as string,
-                poster: params.poster as string,
-                backdrop: params.backdrop as string,
-                overview: params.overview as string,
-                year: params.year as string,
-                rating: params.rating ? parseFloat(params.rating as string) : 0,
-                genres: params.genres ? (params.genres as string).split(',') : [],
-                cast: [],
-            }
-        };
-      }
-
-      if (isMounted) {
-        setMedia(item);
-        // Only set the initial favorite state once to avoid missing updates from store
-        // but we'll let the store manage the actual state.
-        setLoading(false); // Show content immediately
+      try {
+        const item = await getItemAPI(id);
+        if (isMounted) {
+          setMedia(item);
+          setFavorite(isFavorite(id));
+        }
+      } catch (e) {
+        console.warn('[MediaDetail] Erro ao carregar item:', id, e);
+      } finally {
+        if (isMounted) setLoading(false);
       }
     }
     load();
@@ -94,13 +73,7 @@ export default function MediaDetailScreen() {
         isMounted = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]); // DO NOT depend on isFavorite or params to avoid infinite loops
-
-  // Update favorite state separately when store changes
-  const isFav = isFavorite(id as string);
-  useEffect(() => {
-    setFavorite(isFav);
-  }, [isFav]);
+  }, [id]);
 
   const handleBack = useCallback(() => {
     router.back();
@@ -124,6 +97,26 @@ export default function MediaDetailScreen() {
     }
     setFavorite(!favorite);
   }, [media, favorite, addFavorite, removeFavorite]);
+
+  const handleCast = useCallback(() => {
+    if (!media?.url) return;
+    if (!castClient) {
+      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Conecte um Chromecast antes de transmitir.');
+      return;
+    }
+    const title = media.tmdb?.title || media.name;
+    castClient.loadMedia({
+      mediaInfo: {
+        contentUrl: media.url,
+        metadata: {
+          type: 'movie',
+          title,
+          images: media.tmdb?.poster ? [{ url: media.tmdb.poster }] : [],
+        },
+      },
+      autoplay: true,
+    });
+  }, [media, castClient]);
 
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({
@@ -254,16 +247,22 @@ export default function MediaDetailScreen() {
             </Text>
           </TouchableOpacity>
           
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.iconButton, favorite && styles.iconButtonActive]}
             onPress={handleFavorite}
           >
-            <Ionicons 
-              name={favorite ? 'heart' : 'heart-outline'} 
-              size={24} 
-              color={favorite ? '#FF4757' : Colors.text} 
+            <Ionicons
+              name={favorite ? 'heart' : 'heart-outline'}
+              size={24}
+              color={favorite ? '#FF4757' : Colors.text}
             />
           </TouchableOpacity>
+
+          {media.url && (
+            <TouchableOpacity style={styles.iconButton} onPress={handleCast}>
+              <MaterialIcons name="cast" size={24} color={Colors.text} />
+            </TouchableOpacity>
+          )}
         </View>
         
         {/* Genres */}
@@ -329,14 +328,10 @@ export default function MediaDetailScreen() {
         {tmdb?.cast && tmdb.cast.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Elenco</Text>
-            <FlatList
-              data={tmdb.cast}
-              keyExtractor={(item) => item.id.toString()}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: Spacing.lg }}
-              renderItem={({ item: actor }) => (
-                <TouchableOpacity 
+            <View style={styles.castGrid}>
+              {tmdb.cast.map((actor) => (
+                <TouchableOpacity
+                  key={actor.id.toString()}
                   style={styles.castCard}
                   onPress={() => handleActorPress(actor)}
                 >
@@ -349,8 +344,8 @@ export default function MediaDetailScreen() {
                   <Text style={styles.castName} numberOfLines={1}>{actor.name}</Text>
                   <Text style={styles.castCharacter} numberOfLines={1}>{actor.character}</Text>
                 </TouchableOpacity>
-              )}
-            />
+              ))}
+            </View>
           </View>
         )}
 
@@ -526,9 +521,14 @@ const styles = StyleSheet.create({
     fontSize: Typography.caption.fontSize,
     fontWeight: '600',
   },
+  castGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.md,
+  },
   castCard: {
     width: 80,
-    marginRight: Spacing.md,
     alignItems: 'center',
   },
   castPhoto: {

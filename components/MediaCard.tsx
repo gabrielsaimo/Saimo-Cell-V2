@@ -1,15 +1,18 @@
-import React, { memo, useCallback, useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
+import React, { memo, useCallback, useState, useMemo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
   Dimensions,
+  Modal,
+  Alert,
+  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import type { MediaItem } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
@@ -51,8 +54,10 @@ const getRatingColor = (rating?: number) => {
 
 const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) => {
   const router = useRouter();
+  const client = useRemoteMediaClient();
   const { isFavorite, addFavorite, removeFavorite } = useMediaStore();
   const [favorite, setFavorite] = useState(isFavorite(item.id));
+  const [showOptions, setShowOptions] = useState(false);
 
   const dimensions = cardWidth
     ? { width: cardWidth, height: Math.round(cardWidth * 1.5) }
@@ -97,10 +102,52 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
     setFavorite(!favorite);
   }, [item.id, favorite, addFavorite, removeFavorite]);
 
+  const handleLongPress = useCallback(() => {
+    setShowOptions(true);
+  }, []);
+
+  const handleOptionOpen = useCallback(() => {
+    setShowOptions(false);
+    handlePress();
+  }, [handlePress]);
+
+  const handleOptionCast = useCallback(() => {
+    setShowOptions(false);
+    if (!item.url) return;
+    if (!client) {
+      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Conecte um Chromecast antes de transmitir.');
+      return;
+    }
+    const title = item.tmdb?.title || item.name;
+    client.loadMedia({
+      mediaInfo: {
+        contentUrl: item.url,
+        metadata: {
+          type: 'movie',
+          title,
+          images: item.tmdb?.poster ? [{ url: item.tmdb.poster }] : [],
+        },
+      },
+      autoplay: true,
+    });
+  }, [client, item]);
+
+  const handleOptionFavorite = useCallback(() => {
+    setShowOptions(false);
+    if (favorite) {
+      removeFavorite(item.id);
+    } else {
+      addFavorite(item.id);
+    }
+    setFavorite(f => !f);
+  }, [item.id, favorite, addFavorite, removeFavorite]);
+
   return (
     <TouchableOpacity
       style={[styles.container, { width: dimensions.width, height: dimensions.height }]}
       onPress={handlePress}
+      onLongPress={handleLongPress}
+      delayLongPress={600}
       activeOpacity={0.8}
     >
       {/* Poster */}
@@ -108,20 +155,18 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
         source={{ uri: tmdb?.poster || '' }}
         style={styles.poster}
         contentFit="cover"
-        transition={200}
+        transition={0}
         cachePolicy="memory-disk"
         recyclingKey={tmdb?.poster || item.url}
+        priority={Platform.OS === 'android' ? 'high' : undefined}
       />
       
-      {/* Gradient overlay */}
-      <LinearGradient
-        colors={['transparent', 'transparent', 'rgba(0,0,0,0.9)']}
-        style={styles.gradient}
-      />
+      {/* Bottom-only overlay for title legibility */}
+      <View style={styles.gradient} pointerEvents="none" />
       
       {/* Rating Badge */}
-      {(tmdb?.rating || 0) > 0 && (
-        <View style={[styles.ratingBadge, { backgroundColor: getRatingColor(tmdb.rating!) }]}>
+      {tmdb && (tmdb.rating ?? 0) > 0 && (
+        <View style={[styles.ratingBadge, { backgroundColor: getRatingColor(tmdb.rating) }]}>
           <Ionicons name="star" size={10} color="#000" />
           <Text style={styles.ratingText}>{tmdb.rating!.toFixed(1)}</Text>
         </View>
@@ -167,9 +212,66 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
           <Text style={styles.year}>{tmdb.year}</Text>
         )}
       </View>
+
+      {/* Long Press Action Sheet */}
+      <Modal
+        visible={showOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowOptions(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          onPress={() => setShowOptions(false)}
+          activeOpacity={1}
+        >
+          <View style={styles.actionSheet}>
+            <View style={styles.actionSheetHandle} />
+            <Text style={styles.actionSheetTitle} numberOfLines={1}>
+              {tmdb?.title || item.name}
+            </Text>
+
+            <TouchableOpacity style={styles.actionItem} onPress={handleOptionOpen}>
+              <Ionicons name="play-circle-outline" size={24} color={Colors.text} />
+              <Text style={styles.actionItemText}>
+                {hasSeries ? 'Ver episódios' : 'Assistir'}
+              </Text>
+            </TouchableOpacity>
+
+            {!hasSeries && (
+              <TouchableOpacity style={styles.actionItem} onPress={handleOptionCast}>
+                <MaterialIcons name="cast" size={24} color={Colors.text} />
+                <Text style={styles.actionItemText}>Transmitir</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={styles.actionItem} onPress={handleOptionFavorite}>
+              <Ionicons
+                name={favorite ? 'heart' : 'heart-outline'}
+                size={24}
+                color={favorite ? '#FF4757' : Colors.text}
+              />
+              <Text style={styles.actionItemText}>
+                {favorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.actionItem, styles.cancelItem]}
+              onPress={() => setShowOptions(false)}
+            >
+              <Text style={styles.cancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </TouchableOpacity>
   );
-}, (prev, next) => prev.item.id === next.item.id);
+}, (prev: MediaCardProps, next: MediaCardProps) =>
+  prev.item.id === next.item.id &&
+  prev.item.tmdb?.rating === next.item.tmdb?.rating &&
+  prev.item.tmdb?.poster === next.item.tmdb?.poster
+);
 
 MediaCard.displayName = 'MediaCard';
 
@@ -186,7 +288,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
   },
   gradient: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '40%',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   ratingBadge: {
     position: 'absolute',
@@ -245,7 +352,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    padding: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
   },
   title: {
     color: Colors.text,
@@ -257,6 +366,57 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 10,
     marginTop: 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  actionSheet: {
+    backgroundColor: Colors.cardBg,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    paddingBottom: Spacing.xl,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+  },
+  actionSheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.textSecondary,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: Spacing.md,
+    opacity: 0.4,
+  },
+  actionSheetTitle: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
+    marginBottom: Spacing.md,
+  },
+  actionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: Colors.surface,
+  },
+  actionItemText: {
+    color: Colors.text,
+    fontSize: Typography.body.fontSize,
+  },
+  cancelItem: {
+    justifyContent: 'center',
+    marginTop: Spacing.sm,
+  },
+  cancelText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.body.fontSize,
+    fontWeight: '600',
+    textAlign: 'center',
+    flex: 1,
   },
 });
 

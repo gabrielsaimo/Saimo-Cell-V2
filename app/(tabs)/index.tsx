@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useCallback, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,8 +6,7 @@ import {
   StatusBar,
   TextInput,
   TouchableOpacity,
-  InteractionManager,
-  Switch, // added
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,13 +15,10 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useChannelStore } from '../../stores/channelStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { initEPGService, fetchChannelEPG, hasEPGMapping, hasFreshCache, loadFromDiskCache, onEPGProgress, getEPGLoadedCount } from '../../services/epgService';
-import { getAllChannels } from '../../data/channels';
-import { getTotalEPGChannels } from '../../data/epgMappings';
+import { initEPGService, onEPGProgress, onEPGStateChange, isEPGLoaded } from '../../services/epgService';
 import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
-import EPGConsentModal from '../../components/EPGConsentModal';
 import EPGGuideModal from '../../components/EPGGuideModal';
 
 export default function HomeScreen() {
@@ -31,15 +27,10 @@ export default function HomeScreen() {
   const [pendingCategory, setPendingCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
-  const [epgProgress, setEpgProgress] = useState({ loaded: 0, total: 0 });
+  const [epgProgress, setEpgProgress] = useState({ progress: 0, loaded: 0, total: 0 });
   const [isLoadingEPG, setIsLoadingEPG] = useState(false);
-  
-  // EPG Consent State — começa false; só aparece se houver canais sem cache em disco
-  const [showEPGConsent, setShowEPGConsent] = useState(false);
-  const [allowEPGLoading, setAllowEPGLoading] = useState(false);
+
   const [showEPGGuide, setShowEPGGuide] = useState(false);
-  
-  const prefetchedRef = useRef(false);
   
   const { 
     selectedCategory, 
@@ -53,40 +44,20 @@ export default function HomeScreen() {
   } = useChannelStore();
   
   const { favorites } = useFavoritesStore();
-  const { adultUnlocked, unlockAdult } = useSettingsStore();
+  const { adultUnlocked, unlockAdult, showEPG } = useSettingsStore();
 
-  const TOTAL_EPG = getTotalEPGChannels();
-
-  // Initialize EPG: carrega disco → memória silenciosamente.
-  // Só mostra modal de consentimento se ainda há canais sem cache.
+  // Auto-init EPG se habilitado nas configurações
   useEffect(() => {
-    const init = async () => {
-      await initEPGService();
+    if (showEPG && !isEPGLoaded()) {
+      initEPGService();
+    }
+  }, [showEPG]);
 
-      // Todos os canais com mapeamento EPG (incluindo adulto — EPG não depende de unlock)
-      const mapped = getAllChannels(true).filter(c => hasEPGMapping(c.id));
-
-      // Carrega do disco → memória em lotes (evita travar UI thread)
-      const BATCH = 10;
-      for (let i = 0; i < mapped.length; i += BATCH) {
-        mapped.slice(i, i + BATCH).forEach(c => loadFromDiskCache(c.id));
-        await new Promise<void>(resolve => setTimeout(resolve, 0));
-      }
-
-      // Verifica quantos ainda precisam de fetch de rede
-      const needsNetwork = mapped.filter(c => !hasFreshCache(c.id));
-      if (needsNetwork.length > 0) {
-        // Há canais sem cache válido → pede consentimento ao usuário
-        setShowEPGConsent(true);
-      }
-      // Caso contrário: EPG já na memória, cards mostram programação imediatamente
-    };
-
-    init();
-  }, []);
-
-  const categories = getCategories(adultUnlocked);
-  const allChannels = getFilteredChannels(adultUnlocked, favorites);
+  // Memoize categories to prevent re-creation on every render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const categories = useMemo(() => getCategories(adultUnlocked), [adultUnlocked, getCategories, isProList, proChannels]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const allChannels = useMemo(() => getFilteredChannels(adultUnlocked, favorites), [adultUnlocked, favorites, getFilteredChannels, isProList, proChannels]);
 
   // Filtra por busca
   const channels = useMemo(() => {
@@ -98,70 +69,14 @@ export default function HomeScreen() {
     );
   }, [allChannels, searchQuery]);
 
-  // Prefetch EPG em background — UM canal por vez + yield entre cada um.
-  // Nunca bloqueia navegação nem interações do usuário.
   useEffect(() => {
-    if (!allowEPGLoading) return;
-    if (channels.length === 0 || prefetchedRef.current) return;
-    prefetchedRef.current = true;
-
-    // Filtra apenas canais sem cache fresco em memória
-    const channelIds = channels
-      .filter(c => hasEPGMapping(c.id) && !hasFreshCache(c.id))
-      .map(c => c.id);
-
-    // Nada a carregar (tudo em cache) — não mostra barra de progresso
-    if (channelIds.length === 0) return;
-
-    let cancelled = false;
-
-    // Aguarda animações/interações terminarem antes de iniciar
-    const task = InteractionManager.runAfterInteractions(() => {
-      if (cancelled) return;
-
-      const total = channelIds.length;
-      let loaded = 0;
-      setIsLoadingEPG(true);
-      setEpgProgress({ loaded: 0, total });
-
-      const loadAll = async () => {
-        for (const channelId of channelIds) {
-          if (cancelled) return;
-
-          // Busca UM canal — se já estiver em cache (disco), retorna rápido
-          await fetchChannelEPG(channelId).catch(() => {});
-          loaded++;
-
-          // Atualiza progresso a cada 5 canais para reduzir re-renders
-          if (loaded % 5 === 0 || loaded >= total) {
-            setEpgProgress({ loaded, total });
-          }
-
-          // Yield obrigatório após cada canal — JS thread livre para toques/navegação
-          await new Promise<void>(resolve => setTimeout(resolve, 0));
-        }
-        if (!cancelled) {
-          setEpgProgress({ loaded: total, total });
-          setIsLoadingEPG(false);
-        }
-      };
-
-      loadAll();
+    const unsubProg = onEPGProgress((progress, loaded, total) => {
+      setEpgProgress({ progress, loaded, total });
     });
-
-    return () => {
-      cancelled = true;
-      task.cancel();
-    };
-  }, [channels, allowEPGLoading]);
-
-  useEffect(() => {
-    const unsub = onEPGProgress((loaded) => {
-      setEpgProgress(prev => ({ ...prev, loaded }));
+    const unsubState = onEPGStateChange((state) => {
+      setIsLoadingEPG(state === 'loading');
     });
-    // Set initial count in case it's already loaded
-    setEpgProgress(prev => ({ ...prev, loaded: getEPGLoadedCount() }));
-    return unsub;
+    return () => { unsubProg(); unsubState(); };
   }, []);
 
   const handleTogglePro = useCallback((val: boolean) => {
@@ -193,16 +108,6 @@ export default function HomeScreen() {
   const handlePinClose = useCallback(() => {
     setPinModalVisible(false);
     setPendingCategory(null);
-  }, []);
-
-  const handleEPGAccept = useCallback(() => {
-    setAllowEPGLoading(true);
-    setShowEPGConsent(false);
-  }, []);
-
-  const handleEPGDecline = useCallback(() => {
-    setAllowEPGLoading(false);
-    setShowEPGConsent(false);
   }, []);
 
   const toggleSearch = useCallback(() => {
@@ -274,17 +179,17 @@ export default function HomeScreen() {
         )}
 
         {/* EPG Loading Progress */}
-        {isLoadingEPG && epgProgress.total > 0 && epgProgress.loaded < epgProgress.total && (
+        {isLoadingEPG && (
           <View style={styles.epgProgressContainer}>
             <Text style={styles.epgProgressText}>
-              Carregando guia... {epgProgress.loaded}/{TOTAL_EPG}
+              Carregando guia... {epgProgress.progress}%
             </Text>
             <View style={styles.epgProgressBar}>
-              <View 
+              <View
                 style={[
-                  styles.epgProgressFill, 
-                  { width: `${Math.min(100, (epgProgress.loaded / TOTAL_EPG) * 100)}%` }
-                ]} 
+                  styles.epgProgressFill,
+                  { width: `${Math.min(100, epgProgress.progress)}%` },
+                ]}
               />
             </View>
           </View>
@@ -310,12 +215,6 @@ export default function HomeScreen() {
         onClose={handlePinClose}
         onSuccess={handlePinSuccess}
         mode="verify"
-      />
-
-      <EPGConsentModal
-        visible={showEPGConsent}
-        onAccept={handleEPGAccept}
-        onDecline={handleEPGDecline}
       />
 
       <EPGGuideModal

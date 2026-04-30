@@ -12,6 +12,7 @@ interface MediaFavorite {
 interface MediaState {
     // Favoritos
     favorites: MediaFavorite[];
+    favoriteIds: Set<string>;
     addFavorite: (id: string) => void;
     removeFavorite: (id: string) => void;
     isFavorite: (id: string) => boolean;
@@ -43,24 +44,29 @@ export const useMediaStore = create<MediaState>()(
         (set, get) => ({
             // Favoritos
             favorites: [],
+            favoriteIds: new Set<string>(),
 
             addFavorite: (id: string) => {
                 const { favorites } = get();
                 if (!favorites.some(f => f.id === id)) {
+                    const newFavorites = [...favorites, { id, addedAt: Date.now() }];
                     set({
-                        favorites: [...favorites, { id, addedAt: Date.now() }]
+                        favorites: newFavorites,
+                        favoriteIds: new Set(newFavorites.map(f => f.id)),
                     });
                 }
             },
 
             removeFavorite: (id: string) => {
+                const newFavorites = get().favorites.filter(f => f.id !== id);
                 set({
-                    favorites: get().favorites.filter(f => f.id !== id)
+                    favorites: newFavorites,
+                    favoriteIds: new Set(newFavorites.map(f => f.id)),
                 });
             },
 
             isFavorite: (id: string) => {
-                return get().favorites.some(f => f.id === id);
+                return get().favoriteIds.has(id);
             },
 
             // Histórico (filmes)
@@ -132,6 +138,12 @@ export const useMediaStore = create<MediaState>()(
                 watchHistory: state.watchHistory,
                 seriesProgress: state.seriesProgress,
             }),
+            // Restore Set from favorites array on hydration
+            onRehydrateStorage: () => (state) => {
+                if (state && state.favoriteIds?.size === 0) {
+                    state.favoriteIds = new Set(state.favorites.map(f => f.id));
+                }
+            },
         }
     )
 );

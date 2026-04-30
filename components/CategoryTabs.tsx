@@ -1,10 +1,11 @@
 import React, { memo, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  Pressable 
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
@@ -78,10 +79,13 @@ const CategoryTabs = memo(({
 
   return (
     <View style={styles.container}>
-      <ScrollView 
-        horizontal 
+      <ScrollView
+        horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        removeClippedSubviews={Platform.OS === 'android'}
+        scrollEventThrottle={16}
+        overScrollMode="never"
       >
         {categories.map((category) => (
           <CategoryTab

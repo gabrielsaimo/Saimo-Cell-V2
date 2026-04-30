@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface FavoritesStore {
     favorites: string[];
+    favoriteIds: Set<string>;
     addFavorite: (channelId: string) => void;
     removeFavorite: (channelId: string) => void;
     toggleFavorite: (channelId: string) => void;
@@ -15,17 +16,26 @@ export const useFavoritesStore = create<FavoritesStore>()(
     persist(
         (set, get) => ({
             favorites: [],
+            favoriteIds: new Set<string>(),
 
             addFavorite: (channelId: string) => {
                 const { favorites } = get();
                 if (!favorites.includes(channelId)) {
-                    set({ favorites: [...favorites, channelId] });
+                    const newFavorites = [...favorites, channelId];
+                    set({
+                        favorites: newFavorites,
+                        favoriteIds: new Set(newFavorites),
+                    });
                 }
             },
 
             removeFavorite: (channelId: string) => {
                 const { favorites } = get();
-                set({ favorites: favorites.filter(id => id !== channelId) });
+                const newFavorites = favorites.filter(id => id !== channelId);
+                set({
+                    favorites: newFavorites,
+                    favoriteIds: new Set(newFavorites),
+                });
             },
 
             toggleFavorite: (channelId: string) => {
@@ -38,16 +48,26 @@ export const useFavoritesStore = create<FavoritesStore>()(
             },
 
             isFavorite: (channelId: string) => {
-                return get().favorites.includes(channelId);
+                return get().favoriteIds.has(channelId);
             },
 
             clearFavorites: () => {
-                set({ favorites: [] });
+                set({ favorites: [], favoriteIds: new Set<string>() });
             },
         }),
         {
             name: 'saimo-favorites',
             storage: createJSONStorage(() => AsyncStorage),
+            // Convert Set to array for persistence
+            partialize: (state) => ({
+                favorites: state.favorites,
+            }),
+            // Restore Set from favorites array on hydration
+            onRehydrateStorage: () => (state) => {
+                if (state) {
+                    state.favoriteIds = new Set(state.favorites);
+                }
+            },
         }
     )
 );

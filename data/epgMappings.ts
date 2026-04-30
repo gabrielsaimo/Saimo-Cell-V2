@@ -99,8 +99,8 @@ export const meuguiaChannelCodes: Record<string, string> = {
 };
 
 // Slugs para tvplus.com.br  (URL: https://www.tvplus.com.br/programacao/{slug})
+// Nota: TVPlus é SPA (JavaScript-rendered) — manter apenas se confirmado funcionar
 export const tvplusChannelSlugs: Record<string, string> = {
-    'adult-swim': 'adult-swim',
     'curta': 'curta',
 };
 
@@ -140,6 +140,9 @@ export const guiadetvChannelSlugs: Record<string, string> = {
     'premiere2': 'premiere-2',
     'premiere3': 'premiere-3',
     'premiere4': 'premiere-4',
+
+    // ── Animação ───────────────────────────────────────────────────────────────
+    'adult-swim': 'adult-swim',
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

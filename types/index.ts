@@ -2,6 +2,17 @@
 
 // ===== CHANNEL TYPES =====
 
+export interface ChannelDRM {
+    clearKey?: string;
+    widevine?: string;
+}
+
+export interface ChannelStream {
+    url: string;
+    quality?: string;
+    headers?: Record<string, string>;
+}
+
 export interface Channel {
     id: string;
     name: string;
@@ -9,6 +20,10 @@ export interface Channel {
     category: string;
     logo: string;
     channelNumber?: number;
+    drm?: ChannelDRM;
+    headers?: Record<string, string>;
+    streams?: ChannelStream[];
+    epgId?: string;
 }
 
 // ===== EPG TYPES =====

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Saimo-v2",
+    "name": "Saimo-TV",
     "slug": "saimo-v2",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "default",
     "icon": "./assets/images/saimo_tv_logo.png",
     "scheme": "saimo",
@@ -16,7 +16,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.saimo.tv",
-      "requiresFullScreen": false,
       "infoPlist": {
         "UIBackgroundModes": [
           "audio"
@@ -32,10 +31,10 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.saimo.tv",
-      "usesCleartextTraffic": true,
       "permissions": [
         "INTERNET",
-        "VIBRATE"
+        "VIBRATE",
+        "REQUEST_INSTALL_PACKAGES"
       ]
     },
     "web": {
@@ -67,23 +66,41 @@
       ],
       "./plugins/withPictureInPicture",
       [
+        "react-native-video",
+        {
+          "enableNotificationControls": false,
+          "enableBackgroundAudio": false,
+          "androidExtensions": {
+            "useExoplayerHls": true,
+            "useExoplayerDash": true,
+            "useExoplayerSmoothStreaming": false
+          }
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {
             "compileSdkVersion": 36,
             "targetSdkVersion": 36,
             "buildToolsVersion": "36.0.0",
-            "gradleVersion": "8.13"
+            "gradleVersion": "8.13",
+            "enableProguardInReleaseBuilds": true,
+            "minifyEnabled": true,
+            "shrinkResources": true
           },
           "ios": {
-            "useFrameworks": "static"
+            "useFrameworks": "static",
+            "enableBitcode": false
           }
         }
       ]
     ],
     "experiments": {
-      "typedRoutes": true
+      "typedRoutes": true,
+      "turboModules": true
     },
+    "jsEngine": "hermes",
     "extra": {
       "router": {},
       "eas": {

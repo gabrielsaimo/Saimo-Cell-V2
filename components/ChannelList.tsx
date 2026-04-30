@@ -1,9 +1,10 @@
 import React, { memo, useMemo, useCallback } from 'react';
-import { 
-  View, 
-  StyleSheet, 
+import {
+  View,
+  StyleSheet,
   Text,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { FlashList } from '@shopify/flash-list';
@@ -18,18 +19,8 @@ interface ChannelListProps {
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - Spacing.lg * 3) / 2;
-const ESTIMATED_ITEM_SIZE = 180 + Spacing.md; 
 
 const ChannelList = memo(({ channels }: ChannelListProps) => {
-  if (channels.length === 0) {
-    return (
-      <View style={styles.emptyContainer}>
-        <Ionicons name="tv-outline" size={64} color={Colors.textSecondary} />
-        <Text style={styles.emptyText}>Nenhum canal encontrado</Text>
-      </View>
-    );
-  }
-
   // Divide canais em pares para layout de 2 colunas
   const rows = useMemo(() => {
     const result: Channel[][] = [];
@@ -48,15 +39,27 @@ const ChannelList = memo(({ channels }: ChannelListProps) => {
     </View>
   ), []);
 
+  if (channels.length === 0) {
+    return (
+      <View style={styles.emptyContainer}>
+        <Ionicons name="tv-outline" size={64} color={Colors.textSecondary} />
+        <Text style={styles.emptyText}>Nenhum canal encontrado</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.listContainer}>
       <FlashList
         data={rows}
         renderItem={renderRow}
-        estimatedItemSize={ESTIMATED_ITEM_SIZE}
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
         keyExtractor={(item) => item[0].id}
+        removeClippedSubviews={Platform.OS === 'android'}
+        maintainVisibleContentPosition={{
+          autoscrollToTopThreshold: 10,
+        }}
       />
     </View>
   );
