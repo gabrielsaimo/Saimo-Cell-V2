@@ -20,6 +20,8 @@ import { useRemoteMediaClient } from 'react-native-google-cast';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { getItemAPI } from '../../services/apiService';
 import { useMediaStore } from '../../stores/mediaStore';
+import { downloadManager } from '../../services/downloadManager';
+import DownloadButton from '../../components/DownloadButton';
 import type { MediaItem, CastMember } from '../../types';
 
 const { height } = Dimensions.get('window');
@@ -121,7 +123,7 @@ export default function MediaDetailScreen() {
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({
       pathname: '/actor/[id]',
-      params: { id: actor.id.toString(), name: actor.name }
+      params: { id: actor.id.toString(), name: actor.name, photo: actor.photo || '' }
     });
   }, [router]);
 
@@ -257,6 +259,13 @@ export default function MediaDetailScreen() {
               color={favorite ? '#FF4757' : Colors.text}
             />
           </TouchableOpacity>
+
+          {media.url && (
+            <DownloadButton
+              itemId={media.id}
+              onDownload={() => downloadManager.enqueueMovie(media)}
+            />
+          )}
 
           {media.url && (
             <TouchableOpacity style={styles.iconButton} onPress={handleCast}>

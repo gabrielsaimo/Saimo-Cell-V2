@@ -145,8 +145,12 @@ export interface MediaItem {
     name: string;
     url: string;
     category: string;
+    categoryLabel?: string;
     type: 'movie' | 'tv';
     isAdult: boolean;
+    logo?: string;
+    totalSeasons?: number;
+    totalEpisodes?: number;
     tmdb?: TMDBData;
     episodes?: SeriesEpisodes;
 }
@@ -179,4 +183,68 @@ export interface SeriesProgress {
     episode: number;
     episodeId: string;
     watchedAt: number;
+}
+
+// ===== DOWNLOAD TYPES =====
+
+export type DownloadStatus =
+    | 'queued'
+    | 'downloading'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+    | 'cancelled';
+
+export interface DownloadMediaSnapshot {
+    id: string;
+    name: string;
+    type: 'movie' | 'tv';
+    tmdb?: {
+        title: string;
+        poster?: string;
+        year?: string;
+        rating?: number;
+    };
+}
+
+export interface DownloadItem {
+    id: string;
+    mediaId: string;
+    itemType: 'movie' | 'episode';
+    title: string;
+    subtitle?: string;
+    posterUrl?: string;
+    localPath: string;
+    fileSize: number;
+    duration?: number;
+    seriesId?: string;
+    seasonNumber?: number;
+    episodeNumber?: number;
+    mediaSnapshot: DownloadMediaSnapshot;
+    downloadedAt: number;
+}
+
+export interface DownloadTask {
+    id: string;
+    mediaId: string;
+    itemType: 'movie' | 'episode';
+    title: string;
+    subtitle?: string;
+    posterUrl?: string;
+    seriesId?: string;
+    seasonNumber?: number;
+    episodeNumber?: number;
+    mediaSnapshot: DownloadMediaSnapshot;
+    status: DownloadStatus;
+    progress: number;
+    bytesDownloaded: number;
+    bytesTotal: number;
+    remoteUrl: string;
+    destPath: string;
+    resumableSnapshot?: string;
+    error?: string;
+    retries: number;
+    createdAt: number;
+    speedBps?: number;
+    eta?: number;
 }

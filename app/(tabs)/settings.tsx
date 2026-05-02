@@ -246,7 +246,7 @@ export default function SettingsScreen() {
         {/* App Info */}
         <View style={styles.appInfo}>
           <Text style={styles.appName}>Saimo TV</Text>
-          <Text style={styles.appVersion}>Versão 1.1.0</Text>
+          <Text style={styles.appVersion}>Versão 1.1.2</Text>
         </View>
       </ScrollView>
 

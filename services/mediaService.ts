@@ -1,4 +1,4 @@
-// Serviço de mídia - funções auxiliares + wrappers para streamingService
+// Serviço de mídia - funções auxiliares + wrappers para apiService
 import type { MediaItem, SeriesItem } from '../types';
 import {
     loadAllPreviews,
@@ -6,11 +6,13 @@ import {
     getCategoryItems,
     loadNextPage,
     searchInLoadedData,
-    CATEGORIES,
-} from './streamingService';
+    categoryHasMore,
+    getAllLoadedCategories,
+} from './apiService';
 
-// Re-exportar categorias do streamingService
-export const MEDIA_CATEGORIES = CATEGORIES;
+// Re-exportar
+export { categoryHasMore };
+export const MEDIA_CATEGORIES: { id: string; name: string }[] = [];
 
 // Utility: Duplicatas por NOME exato (case-insensitive)
 export function deduplicateByName(items: MediaItem[]): MediaItem[] {
@@ -36,6 +38,9 @@ export async function loadCategory(categoryId: string): Promise<MediaItem[]> {
 
 // Carregar previews de todas categorias
 export async function loadInitialCategories(): Promise<Map<string, MediaItem[]>> {
+    // Use getAllLoadedCategories first (instant, no network) then fall back to full load
+    const cached = getAllLoadedCategories();
+    if (cached.size > 0) return cached;
     return loadAllPreviews();
 }
 
@@ -188,5 +193,8 @@ export async function getSeriesById(id: string): Promise<SeriesItem | null> {
 
 // Verificar se um item é série
 export function isSeries(item: any): boolean {
-    return item.episodes && Object.keys(item.episodes).length > 0;
+    if (item.type === 'tv' || item.type === 'series') return true;
+    if (item.totalSeasons && item.totalSeasons > 0) return true;
+    if (item.episodes && Object.keys(item.episodes).length > 0) return true;
+    return false;
 }

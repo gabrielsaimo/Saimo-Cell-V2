@@ -64,8 +64,11 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
     : SIZES[size];
   const tmdb = item.tmdb;
 
-  // Verificar se é série (tem episódios)
-  const hasSeries = item.episodes && Object.keys(item.episodes).length > 0;
+  // Verificar se é série
+  const hasSeries =
+    item.type === 'tv' ||
+    (item.totalSeasons != null && item.totalSeasons > 0) ||
+    (item.episodes != null && Object.keys(item.episodes).length > 0);
 
   const handlePress = useCallback(() => {
     if (hasSeries) {

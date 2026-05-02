@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
-import { loadInitialCategories, getMediaByActor } from '../../services/mediaService';
+import { getFilmography } from '../../services/apiService';
 import type { MediaItem, CastMember } from '../../types';
 import MediaCard from '../../components/MediaCard';
 
@@ -29,7 +29,7 @@ const FILM_CARD_WIDTH = Math.floor(
 );
 
 export default function ActorScreen() {
-  const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
+  const { id, name, photo } = useLocalSearchParams<{ id: string; name: string; photo?: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
@@ -39,32 +39,35 @@ export default function ActorScreen() {
 
   useEffect(() => {
     async function load() {
-      if (!id) return;
-      
-      const actorId = parseInt(id, 10);
-      const categories = await loadInitialCategories();
-      
-      // Combinar todos os items
-      const allItems: MediaItem[] = [];
-      categories.forEach(items => allItems.push(...items));
-      
-      // Buscar filmes do ator
-      const actorMedia = getMediaByActor(actorId, allItems);
-      setFilmography(actorMedia);
-      
-      // Pegar info do ator do primeiro filme
-      for (const item of actorMedia) {
-        const castMember = item.tmdb?.cast?.find(c => c.id === actorId);
-        if (castMember) {
-          setActor(castMember);
-          break;
-        }
+      if (!name) { setLoading(false); return; }
+
+      try {
+        const actorId = parseInt(id, 10);
+        const result = await getFilmography({
+          p_actor_id: actorId || undefined,
+          p_actor: actorId ? undefined : (name as string),
+        });
+        // Deduplicate: by ID first, then by normalized title
+        const seen = new Set<string>();
+        const seenTitles = new Set<string>();
+        const unique = result.items.filter(item => {
+          if (seen.has(item.id)) return false;
+          seen.add(item.id);
+          const title = (item.tmdb?.title || item.name).trim().toLowerCase();
+          if (seenTitles.has(title)) return false;
+          seenTitles.add(title);
+          return true;
+        });
+        setFilmography(unique);
+        setActor({ id: actorId || 0, name: name as string, character: '', photo: (photo as string) || null });
+      } catch {
+        // silently fail — empty filmography
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
     }
     load();
-  }, [id]);
+  }, [id, name]);
 
   const handleBack = () => router.back();
 

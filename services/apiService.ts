@@ -295,6 +295,10 @@ export async function getCatalog(params: {
 }
 
 /** get_item — detalhes completos de um título (url, sinopse, elenco, episódios) */
+export function invalidateItemCache(id: string): void {
+    ITEM_CACHE.delete(id);
+}
+
 export async function getItemAPI(id: string): Promise<MediaItem> {
     if (ITEM_CACHE.has(id)) {
         // Move para o final do Map (LRU: mais recente = último)

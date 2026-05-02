@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saimo-TV",
     "slug": "saimo-v2",
-    "version": "1.1.0",
+    "version": "1.1.2",
     "orientation": "default",
     "icon": "./assets/images/saimo_tv_logo.png",
     "scheme": "saimo",
@@ -18,7 +18,12 @@
       "bundleIdentifier": "com.saimo.tv",
       "infoPlist": {
         "UIBackgroundModes": [
-          "audio"
+          "audio",
+          "fetch",
+          "processing"
+        ],
+        "BGTaskSchedulerPermittedIdentifiers": [
+          "com.saimo.tv.background-download"
         ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -34,7 +39,12 @@
       "permissions": [
         "INTERNET",
         "VIBRATE",
-        "REQUEST_INSTALL_PACKAGES"
+        "REQUEST_INSTALL_PACKAGES",
+        "POST_NOTIFICATIONS",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_DATA_SYNC",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK"
       ]
     },
     "web": {
@@ -65,6 +75,15 @@
         }
       ],
       "./plugins/withPictureInPicture",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#6366F1",
+          "androidMode": "default",
+          "androidCollapsedTitle": "Saimo TV"
+        }
+      ],
       [
         "react-native-video",
         {

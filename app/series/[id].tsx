@@ -21,7 +21,9 @@ import { useRemoteMediaClient } from 'react-native-google-cast';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { getItemAPI } from '../../services/apiService';
 import { useMediaStore } from '../../stores/mediaStore';
-import type { SeriesItem, Episode, CastMember } from '../../types';
+import { downloadManager } from '../../services/downloadManager';
+import DownloadButton from '../../components/DownloadButton';
+import type { MediaItem, Episode, CastMember } from '../../types';
 
 const { width, height } = Dimensions.get('window');
 
@@ -30,7 +32,7 @@ export default function SeriesDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  const [series, setSeries] = useState<SeriesItem | null>(null);
+  const [series, setSeries] = useState<MediaItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedSeason, setSelectedSeason] = useState<string>('1');
   
@@ -45,7 +47,7 @@ export default function SeriesDetailScreen() {
       if (!id) return;
       try {
         const item = await getItemAPI(id);
-        setSeries(item as any);
+        setSeries(item);
         setFavorite(isFavorite(id));
         const progress = getSeriesProgress(id);
         if (progress) setSelectedSeason(progress.season.toString());
@@ -99,7 +101,7 @@ export default function SeriesDetailScreen() {
     setSeriesProgress(series.id, parseInt(season), ep.episode, ep.id);
 
     // Descobre o próximo episódio (mesmo season ou próximo season)
-    const seasonEps = series.episodes[season] || [];
+    const seasonEps = series.episodes?.[season] || [];
     const currentIndex = seasonEps.findIndex(e => e.id === ep.id);
     let nextEp: Episode | null = null;
     let nextSeason = season;
@@ -108,11 +110,11 @@ export default function SeriesDetailScreen() {
       nextEp = seasonEps[currentIndex + 1];
     } else {
       // Tenta avançar para próxima temporada
-      const seasonNums = Object.keys(series.episodes).sort((a, b) => parseInt(a) - parseInt(b));
+      const seasonNums = Object.keys(series.episodes || {}).sort((a, b) => parseInt(a) - parseInt(b));
       const seasonIdx = seasonNums.indexOf(season);
       if (seasonIdx >= 0 && seasonIdx < seasonNums.length - 1) {
         nextSeason = seasonNums[seasonIdx + 1];
-        const nextSeasonEps = series.episodes[nextSeason] || [];
+        const nextSeasonEps = series.episodes?.[nextSeason] || [];
         if (nextSeasonEps.length > 0) nextEp = nextSeasonEps[0];
       }
     }
@@ -138,7 +140,7 @@ export default function SeriesDetailScreen() {
 
   const handleContinue = useCallback(() => {
     if (!series || !progress) return;
-    const seasonEps = series.episodes[progress.season.toString()];
+    const seasonEps = series.episodes?.[progress.season.toString()];
     const ep = seasonEps?.find(e => e.episode === progress.episode);
     if (ep) {
       handlePlayEpisode(ep, progress.season.toString());
@@ -167,7 +169,7 @@ export default function SeriesDetailScreen() {
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({
       pathname: '/actor/[id]',
-      params: { id: actor.id.toString(), name: actor.name }
+      params: { id: actor.id.toString(), name: actor.name, photo: actor.photo || '' }
     });
   }, [router]);
 
@@ -237,9 +239,16 @@ export default function SeriesDetailScreen() {
                 {tmdb?.title || series.name}
               </Text>
               <View style={styles.metaRow}>
-                <Text style={styles.metaText}>
-                  {seasons.length} Temporada{seasons.length > 1 ? 's' : ''}
-                </Text>
+                {seasons.length > 0 && (
+                  <Text style={styles.metaText}>
+                    {seasons.length} Temporada{seasons.length > 1 ? 's' : ''}
+                  </Text>
+                )}
+                {seasons.length === 0 && series.totalSeasons != null && (
+                  <Text style={styles.metaText}>
+                    {series.totalSeasons} Temporada{series.totalSeasons > 1 ? 's' : ''}
+                  </Text>
+                )}
                 {tmdb?.rating && (
                   <View style={styles.ratingBadge}>
                     <Ionicons name="star" size={12} color="#FFD700" />
@@ -286,7 +295,7 @@ export default function SeriesDetailScreen() {
               style={styles.iconButton}
               onPress={() => {
                 const ep = progress
-                  ? series.episodes[progress.season.toString()]?.find(e => e.episode === progress.episode)
+                  ? series.episodes?.[progress.season.toString()]?.find(e => e.episode === progress.episode)
                   : episodes[0];
                 const s = progress ? progress.season.toString() : selectedSeason;
                 if (ep) handleCastEpisode(ep, s);
@@ -357,9 +366,25 @@ export default function SeriesDetailScreen() {
         
         {/* Seletor de Temporadas */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Temporadas</Text>
-          <ScrollView 
-            horizontal 
+          <View style={styles.seasonHeader}>
+            <Text style={styles.sectionTitle}>Temporadas</Text>
+            {series && (
+              <TouchableOpacity
+                style={styles.downloadSeasonBtn}
+                onPress={() => {
+                  const seasonNum = parseInt(selectedSeason);
+                  downloadManager.enqueueSeasonAll(series, seasonNum).catch((e: any) => {
+                    Alert.alert('Download T' + selectedSeason, e.message ?? 'Não foi possível enfileirar.');
+                  });
+                }}
+              >
+                <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                <Text style={styles.downloadSeasonText}>Baixar T{selectedSeason}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <ScrollView
+            horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.seasonsRow}
           >
@@ -420,6 +445,15 @@ export default function SeriesDetailScreen() {
                 >
                   <MaterialIcons name="cast" size={22} color={Colors.textSecondary} />
                 </TouchableOpacity>
+              )}
+              {series && (
+                <DownloadButton
+                  itemId={ep.id}
+                  size="small"
+                  onDownload={() =>
+                    downloadManager.enqueueEpisode(series, ep, parseInt(selectedSeason))
+                  }
+                />
               )}
               <TouchableOpacity onPress={() => handlePlayEpisode(ep, selectedSeason)}>
                 <Ionicons name="play-circle" size={32} color={Colors.primary} />
@@ -580,6 +614,28 @@ const styles = StyleSheet.create({
   seeMoreText: {
     color: Colors.primary,
     fontSize: Typography.caption.fontSize,
+    fontWeight: '600',
+  },
+  seasonHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  downloadSeasonBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    backgroundColor: 'rgba(99,102,241,0.12)',
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  downloadSeasonText: {
+    color: Colors.primary,
+    fontSize: 12,
     fontWeight: '600',
   },
   seasonsRow: {

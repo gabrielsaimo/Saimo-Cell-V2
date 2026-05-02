@@ -13,8 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
-import { loadCategory, loadMoreForCategory } from '../../services/mediaService';
-import { categoryHasMore } from '../../services/streamingService';
+import { loadCategory, loadMoreForCategory, categoryHasMore } from '../../services/mediaService';
 import { useMediaStore } from '../../stores/mediaStore';
 import type { MediaItem } from '../../types';
 import MediaCard from '../../components/MediaCard';
