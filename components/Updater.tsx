@@ -26,7 +26,7 @@ export default function Updater() {
   const scaleValue = useRef(new Animated.Value(0.9)).current;
   const opacityValue = useRef(new Animated.Value(0)).current;
 
-  const currentVersion = Constants.expoConfig?.version || '1.1.2';
+  const currentVersion = Constants.expoConfig?.version || '1.1.4';
 
   const checkUpdate = useCallback(async () => {
     try {

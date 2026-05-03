@@ -48,6 +48,8 @@ export default function MediaDetailScreen() {
   const [overviewExpanded, setOverviewExpanded] = useState(false);
 
   const { isFavorite, addFavorite, removeFavorite, addToHistory } = useMediaStore();
+  const progress = useMediaStore(s => s.watchHistory.find(h => h.id === id));
+  
   const castClient = useRemoteMediaClient();
   const [favorite, setFavorite] = useState(false);
 
@@ -243,10 +245,26 @@ export default function MediaDetailScreen() {
             onPress={handlePlay}
             disabled={!media.url}
           >
-            <Ionicons name={media.url ? "play" : "alert-circle"} size={24} color={media.url ? "#000" : Colors.textSecondary} />
-            <Text style={[styles.playText, !media.url && styles.playTextDisabled]}>
-                {media.url ? 'Assistir' : 'Indisponível'}
-            </Text>
+            <View style={styles.playButtonContent}>
+                <Ionicons name={media.url ? "play" : "alert-circle"} size={24} color={media.url ? "#000" : Colors.textSecondary} />
+                <Text style={[styles.playText, !media.url && styles.playTextDisabled]}>
+                    {(() => {
+                        if (!media.url) return 'Indisponível';
+                        if (progress?.progress && progress?.duration) return 'Continuar';
+                        return 'Assistir';
+                    })()}
+                </Text>
+            </View>
+            {(() => {
+                if (progress?.progress && progress?.duration) {
+                    return (
+                        <View style={styles.playProgressContainer}>
+                            <View style={[styles.playProgressFill, { width: `${(progress.progress / progress.duration) * 100}%` }]} />
+                        </View>
+                    );
+                }
+                return null;
+            })()}
           </TouchableOpacity>
           
           <TouchableOpacity
@@ -592,5 +610,25 @@ const styles = StyleSheet.create({
   metaLabel: {
     color: Colors.text,
     fontWeight: '600',
+  },
+  playButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  playProgressContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderBottomLeftRadius: BorderRadius.md,
+    borderBottomRightRadius: BorderRadius.md,
+    overflow: 'hidden',
+  },
+  playProgressFill: {
+    height: '100%',
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
 });

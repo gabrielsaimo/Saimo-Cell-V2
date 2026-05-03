@@ -36,7 +36,8 @@ export default function SeriesDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [selectedSeason, setSelectedSeason] = useState<string>('1');
   
-  const { isFavorite, addFavorite, removeFavorite, getSeriesProgress, setSeriesProgress } = useMediaStore();
+  const { isFavorite, addFavorite, removeFavorite, setSeriesProgress } = useMediaStore();
+  const progress = useMediaStore(s => s.seriesProgress.find(p => p.seriesId === id));
   const castClient = useRemoteMediaClient();
   const [favorite, setFavorite] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
@@ -49,8 +50,9 @@ export default function SeriesDetailScreen() {
         const item = await getItemAPI(id);
         setSeries(item);
         setFavorite(isFavorite(id));
-        const progress = getSeriesProgress(id);
-        if (progress) setSelectedSeason(progress.season.toString());
+        // Use the store's current state to set initial season
+        const initialProgress = useMediaStore.getState().seriesProgress.find(p => p.seriesId === id);
+        if (initialProgress) setSelectedSeason(initialProgress.season.toString());
       } catch (e) {
         console.warn('[SeriesDetail] Erro ao carregar:', id, e);
       } finally {
@@ -77,12 +79,6 @@ export default function SeriesDetailScreen() {
     if (!series?.episodes || !selectedSeason) return [];
     return series.episodes[selectedSeason] || [];
   }, [series, selectedSeason]);
-
-  // Progresso atual
-  const progress = useMemo(() => {
-    if (!id) return null;
-    return getSeriesProgress(id);
-  }, [id, getSeriesProgress]);
 
   const handleBack = useCallback(() => router.back(), [router]);
 
@@ -264,10 +260,17 @@ export default function SeriesDetailScreen() {
         <View style={styles.actions}>
           {progress ? (
             <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
-              <Ionicons name="play" size={24} color="#000" />
-              <Text style={styles.continueText}>
-                Continuar T{progress.season} E{progress.episode}
-              </Text>
+              <View style={styles.continueButtonContent}>
+                <Ionicons name="play" size={24} color="#000" />
+                <Text style={styles.continueText}>
+                  Continuar T{progress.season} E{progress.episode}
+                </Text>
+              </View>
+              {progress.progress && progress.duration && (
+                <View style={styles.continueProgressContainer}>
+                  <View style={[styles.continueProgressFill, { width: `${(progress.progress / progress.duration) * 100}%` }]} />
+                </View>
+              )}
             </TouchableOpacity>
           ) : (
             <TouchableOpacity 
@@ -434,9 +437,23 @@ export default function SeriesDetailScreen() {
                 <Text style={styles.episodeName} numberOfLines={1}>
                   {ep.name || `Episódio ${ep.episode}`}
                 </Text>
-                {progress?.episodeId === ep.id && (
-                  <Text style={styles.episodeContinue}>Continuar assistindo</Text>
-                )}
+                {(() => {
+                  const epProgress = useMediaStore.getState().watchHistory.find(h => h.id === ep.id);
+                  if (epProgress?.progress && epProgress?.duration) {
+                    const pct = (epProgress.progress / epProgress.duration) * 100;
+                    return (
+                      <View style={styles.epProgressRow}>
+                        <View style={styles.epProgressContainer}>
+                          <View style={[styles.epProgressFill, { width: `${pct}%` }]} />
+                        </View>
+                        <Text style={styles.epProgressPct}>{Math.round(pct)}%</Text>
+                      </View>
+                    );
+                  }
+                  return progress?.episodeId === ep.id ? (
+                    <Text style={styles.episodeContinue}>Continuar assistindo</Text>
+                  ) : null;
+                })()}
               </TouchableOpacity>
               {castClient && (
                 <TouchableOpacity
@@ -736,5 +753,48 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 10,
     textAlign: 'center',
+  },
+  continueButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  continueProgressContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 4,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderBottomLeftRadius: BorderRadius.md,
+    borderBottomRightRadius: BorderRadius.md,
+    overflow: 'hidden',
+  },
+  continueProgressFill: {
+    height: '100%',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  epProgressContainer: {
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 1.5,
+    overflow: 'hidden',
+    flex: 1,
+  },
+  epProgressFill: {
+    height: '100%',
+    backgroundColor: Colors.primary,
+  },
+  epProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    width: '90%',
+  },
+  epProgressPct: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '700',
   },
 });

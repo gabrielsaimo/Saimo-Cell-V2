@@ -17,15 +17,15 @@ interface MediaState {
     removeFavorite: (id: string) => void;
     isFavorite: (id: string) => boolean;
 
-    // Histórico de visualização (filmes)
-    watchHistory: { id: string; watchedAt: number; progress?: number }[];
-    addToHistory: (id: string, progress?: number) => void;
-    getProgress: (id: string) => number | undefined;
+    // Histórico de visualização (filmes e episódios)
+    watchHistory: { id: string; watchedAt: number; progress?: number; duration?: number }[];
+    addToHistory: (id: string, progress?: number, duration?: number) => void;
+    getProgress: (id: string) => { progress?: number; duration?: number } | undefined;
 
-    // Progresso de séries (Continuar de onde parou)
-    seriesProgress: SeriesProgress[];
-    setSeriesProgress: (seriesId: string, season: number, episode: number, episodeId: string) => void;
-    getSeriesProgress: (seriesId: string) => SeriesProgress | undefined;
+    // Progresso de séries (Continuar de onde parou a série)
+    seriesProgress: (SeriesProgress & { progress?: number; duration?: number })[];
+    setSeriesProgress: (seriesId: string, season: number, episode: number, episodeId: string, progress?: number, duration?: number) => void;
+    getSeriesProgress: (seriesId: string) => (SeriesProgress & { progress?: number; duration?: number }) | undefined;
 
     // Filtros ativos
     activeFilter: MediaFilterType;
@@ -69,35 +69,39 @@ export const useMediaStore = create<MediaState>()(
                 return get().favoriteIds.has(id);
             },
 
-            // Histórico (filmes)
+            // Histórico (filmes e episódios)
             watchHistory: [],
 
-            addToHistory: (id: string, progress?: number) => {
+            addToHistory: (id: string, progress?: number, duration?: number) => {
                 const { watchHistory } = get();
                 const existing = watchHistory.findIndex(h => h.id === id);
-                const entry = { id, watchedAt: Date.now(), progress };
+                const entry = { id, watchedAt: Date.now(), progress, duration };
 
                 if (existing >= 0) {
                     const updated = [...watchHistory];
                     updated[existing] = entry;
                     set({ watchHistory: updated });
                 } else {
-                    const updated = [entry, ...watchHistory].slice(0, 100);
+                    const updated = [entry, ...watchHistory].slice(0, 500);
                     set({ watchHistory: updated });
                 }
             },
 
             getProgress: (id: string) => {
-                return get().watchHistory.find(h => h.id === id)?.progress;
+                const entry = get().watchHistory.find(h => h.id === id);
+                if (!entry) return undefined;
+                return { progress: entry.progress, duration: entry.duration };
             },
 
             // Progresso de séries
             seriesProgress: [],
 
-            setSeriesProgress: (seriesId: string, season: number, episode: number, episodeId: string) => {
+            setSeriesProgress: (seriesId: string, season: number, episode: number, episodeId: string, progress?: number, duration?: number) => {
                 const { seriesProgress } = get();
                 const existing = seriesProgress.findIndex(p => p.seriesId === seriesId);
-                const entry: SeriesProgress = { seriesId, season, episode, episodeId, watchedAt: Date.now() };
+                const entry: SeriesProgress & { progress?: number; duration?: number } = { 
+                    seriesId, season, episode, episodeId, watchedAt: Date.now(), progress, duration 
+                };
 
                 if (existing >= 0) {
                     const updated = [...seriesProgress];

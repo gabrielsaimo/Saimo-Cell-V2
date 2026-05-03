@@ -1,4 +1,5 @@
 import React, { useMemo, useCallback } from 'react';
+import { useMediaStore } from '../../stores/mediaStore';
 import {
     View,
     Text,
@@ -18,6 +19,62 @@ import { useDownloadStore } from '../../stores/downloadStore';
 import { downloadManager } from '../../services/downloadManager';
 import { formatBytes } from '../../services/downloadUtils';
 import type { DownloadItem } from '../../types';
+
+// -----------------------------------------------------------------------
+// Episode row component
+// -----------------------------------------------------------------------
+function EpisodeDownloadItem({ 
+    ep, 
+    onPlay, 
+    onDelete 
+}: { 
+    ep: DownloadItem; 
+    onPlay: (ep: DownloadItem) => void; 
+    onDelete: (ep: DownloadItem) => void;
+}) {
+    const progress = useMediaStore(s => s.watchHistory.find(h => h.id === ep.id));
+    const pct = (progress?.progress && progress?.duration) ? (progress.progress / progress.duration) * 100 : 0;
+
+    return (
+        <TouchableOpacity
+            style={styles.episodeCard}
+            onPress={() => onPlay(ep)}
+            activeOpacity={0.8}
+        >
+            <View style={styles.episodeNumber}>
+                <Text style={styles.episodeNumberText}>
+                    {ep.episodeNumber ?? '?'}
+                </Text>
+            </View>
+
+            <View style={styles.episodeInfo}>
+                <Text style={styles.episodeName} numberOfLines={1}>
+                    {ep.subtitle ?? `Episódio ${ep.episodeNumber}`}
+                </Text>
+                {pct > 0 && pct < 95 ? (
+                    <View style={styles.epProgressRow}>
+                        <View style={styles.epProgressContainer}>
+                            <View style={[styles.epProgressFill, { width: `${pct}%` }]} />
+                        </View>
+                        <Text style={styles.epProgressPct}>{Math.round(pct)}%</Text>
+                    </View>
+                ) : (
+                    <Text style={styles.episodeSize}>{formatBytes(ep.fileSize)}</Text>
+                )}
+            </View>
+
+            <TouchableOpacity
+                onPress={() => onDelete(ep)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={styles.deleteEpBtn}
+            >
+                <Ionicons name="trash-outline" size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            <Ionicons name="play-circle" size={32} color={Colors.primary} />
+        </TouchableOpacity>
+    );
+}
 
 export default function SeriesDownloadsDetailScreen() {
     const { id: seriesId } = useLocalSearchParams<{ id: string }>();
@@ -107,7 +164,7 @@ export default function SeriesDownloadsDetailScreen() {
     }, [episodes, title, router]);
 
     if (episodes.length === 0) {
-        router.back();
+        // Safe check to avoid flickering/crashes during deletion
         return null;
     }
 
@@ -168,35 +225,12 @@ export default function SeriesDownloadsDetailScreen() {
                         </Text>
 
                         {eps.map((ep) => (
-                            <TouchableOpacity
+                            <EpisodeDownloadItem
                                 key={ep.id}
-                                style={styles.episodeCard}
-                                onPress={() => handlePlayEpisode(ep)}
-                                activeOpacity={0.8}
-                            >
-                                <View style={styles.episodeNumber}>
-                                    <Text style={styles.episodeNumberText}>
-                                        {ep.episodeNumber ?? '?'}
-                                    </Text>
-                                </View>
-
-                                <View style={styles.episodeInfo}>
-                                    <Text style={styles.episodeName} numberOfLines={1}>
-                                        {ep.subtitle ?? `Episódio ${ep.episodeNumber}`}
-                                    </Text>
-                                    <Text style={styles.episodeSize}>{formatBytes(ep.fileSize)}</Text>
-                                </View>
-
-                                <TouchableOpacity
-                                    onPress={() => handleDeleteEpisode(ep)}
-                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                    style={styles.deleteEpBtn}
-                                >
-                                    <Ionicons name="trash-outline" size={18} color={Colors.textSecondary} />
-                                </TouchableOpacity>
-
-                                <Ionicons name="play-circle" size={32} color={Colors.primary} />
-                            </TouchableOpacity>
+                                ep={ep}
+                                onPlay={handlePlayEpisode}
+                                onDelete={handleDeleteEpisode}
+                            />
                         ))}
                     </View>
                 ))}
@@ -329,5 +363,27 @@ const styles = StyleSheet.create({
     },
     deleteEpBtn: {
         padding: Spacing.xs,
+    },
+    epProgressRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 4,
+    },
+    epProgressContainer: {
+        height: 3,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 1.5,
+        overflow: 'hidden',
+        flex: 1,
+    },
+    epProgressFill: {
+        height: '100%',
+        backgroundColor: Colors.primary,
+    },
+    epProgressPct: {
+        color: Colors.textSecondary,
+        fontSize: 10,
+        fontWeight: '700',
     },
 });

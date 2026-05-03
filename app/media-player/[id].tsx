@@ -17,20 +17,26 @@ import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
+import { useDownloadStore } from '../../stores/downloadStore';
 import {
     STRATEGIES, resolveUrlViaGet, detectSourceType,
 } from '../../services/playerStrategies';
 import { getItemAPI } from '../../services/apiService';
+import * as Brightness from 'expo-brightness';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const OSD_HIDE_DELAY = 4500;
+const OSD_HIDE_DELAY = 5500;
 const SEEK_SECONDS = 10;
 const DOUBLE_TAP_DELAY = 300;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 const NEXT_EP_COUNTDOWN = 7;
+const RESIZE_MODES = ['contain', 'cover', 'stretch'] as const;
+type ResizeMode = typeof RESIZE_MODES[number];
+const RESIZE_LABELS: Record<ResizeMode, string> = { contain: 'Normal', cover: 'Preencher', stretch: 'Esticar' };
+const SLEEP_OPTIONS = [15, 30, 45, 60] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -136,57 +142,172 @@ function SpeedSheet({
     );
 }
 
+/** Sleep timer bottom sheet */
+function SleepSheet({
+    visible, remaining, onSelect, onCancel, onClose,
+}: {
+    visible: boolean;
+    remaining: number | null; // seconds remaining or null if off
+    onSelect: (minutes: number) => void;
+    onCancel: () => void;
+    onClose: () => void;
+}) {
+    return (
+        <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}>
+            <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+                <Pressable style={styles.sheetContainer} onPress={() => {}}>
+                    <View style={styles.sheetHandle} />
+                    <Text style={styles.sheetTitle}>Timer de descanso</Text>
+                    {remaining !== null && (
+                        <Text style={styles.sleepRemaining}>
+                            ⏱ Para em {Math.ceil(remaining / 60)} min
+                        </Text>
+                    )}
+                    <View style={styles.speedGrid}>
+                        {SLEEP_OPTIONS.map((m) => (
+                            <TouchableOpacity
+                                key={m}
+                                style={styles.speedChip}
+                                onPress={() => { onSelect(m); onClose(); }}
+                            >
+                                <Text style={styles.speedChipText}>{m} min</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                    {remaining !== null && (
+                        <TouchableOpacity style={styles.sleepCancelBtn} onPress={() => { onCancel(); onClose(); }}>
+                            <Text style={styles.sleepCancelText}>Cancelar timer</Text>
+                        </TouchableOpacity>
+                    )}
+                </Pressable>
+            </Pressable>
+        </Modal>
+    );
+}
+
+/** Audio/Text track selection bottom sheet */
+function TrackSheet({
+    visible, title, tracks, selectedId, onSelect, onClose,
+}: {
+    visible: boolean;
+    title: string;
+    tracks: Array<{ id: number | string; label: string }>;
+    selectedId: number | string | null;
+    onSelect: (id: number | string) => void;
+    onClose: () => void;
+}) {
+    return (
+        <Modal transparent visible={visible} animationType="slide" onRequestClose={onClose}>
+            <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+                <Pressable style={styles.sheetContainer} onPress={() => {}}>
+                    <View style={styles.sheetHandle} />
+                    <Text style={styles.sheetTitle}>{title}</Text>
+                    {tracks.map((t) => (
+                        <TouchableOpacity
+                            key={t.id}
+                            style={styles.trackRow}
+                            onPress={() => { onSelect(t.id); onClose(); }}
+                        >
+                            <Ionicons
+                                name={t.id === selectedId ? 'radio-button-on' : 'radio-button-off'}
+                                size={18}
+                                color={t.id === selectedId ? Colors.primary : 'rgba(255,255,255,0.5)'}
+                            />
+                            <Text style={[styles.trackLabel, t.id === selectedId && styles.trackLabelActive]}>
+                                {t.label}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </Pressable>
+            </Pressable>
+        </Modal>
+    );
+}
+
+
 /** Draggable progress bar */
 function ProgressBar({
     current, duration, buffered,
-    onSeek,
+    onSeek, isSeeking, onSeekStart, onSeekEnd,
 }: {
     current: number;
     duration: number;
     buffered: number;
     onSeek: (t: number) => void;
+    isSeeking: boolean;
+    onSeekStart: (pct: number) => void;
+    onSeekEnd: (pct: number) => void;
 }) {
-    const barWidthRef = useRef(0);
+    const barRef = useRef<View>(null);
+    const barLayoutRef = useRef<{ x: number; width: number }>({ x: 0, width: 1 });
     const [dragging, setDragging] = useState(false);
-    const [dragProgress, setDragProgress] = useState(0);
-    const [tooltipX, setTooltipX] = useState(0);
+    const [dragPct, setDragPct] = useState(0);
+
+    // Measure the bar on layout to get absolute pageX position
+    const onLayout = useCallback(() => {
+        barRef.current?.measure((_fx, _fy, width, _height, pageX) => {
+            barLayoutRef.current = { x: pageX, width: Math.max(1, width) };
+        });
+    }, []);
+
+    const pctFromPageX = (pageX: number) => {
+        const { x, width } = barLayoutRef.current;
+        return Math.max(0, Math.min(1, (pageX - x) / width));
+    };
 
     const panResponder = useMemo(() => PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false, // never yield to outer PanResponder
+
         onPanResponderGrant: (e) => {
-            const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / barWidthRef.current));
+            const pct = pctFromPageX(e.nativeEvent.pageX);
             setDragging(true);
-            setDragProgress(pct);
-            setTooltipX(e.nativeEvent.locationX);
+            setDragPct(pct);
+            onSeekStart(pct);
         },
         onPanResponderMove: (e) => {
-            const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / barWidthRef.current));
-            setDragProgress(pct);
-            setTooltipX(e.nativeEvent.locationX);
+            const pct = pctFromPageX(e.nativeEvent.pageX);
+            setDragPct(pct);
+            onSeekStart(pct); // keep preview updated
         },
         onPanResponderRelease: (e) => {
-            const pct = Math.max(0, Math.min(1, e.nativeEvent.locationX / barWidthRef.current));
+            const pct = pctFromPageX(e.nativeEvent.pageX);
             setDragging(false);
+            onSeekEnd(pct);
             if (duration > 0) onSeek(pct * duration);
         },
-        onPanResponderTerminate: () => setDragging(false),
-        onPanResponderTerminationRequest: () => false, // never yield to outer PanResponder
-    }), [duration, onSeek]);
+        onPanResponderTerminate: () => {
+            setDragging(false);
+            onSeekEnd(dragPct);
+        },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [duration, onSeek, onSeekStart, onSeekEnd]);
 
-    const progress = duration > 0 ? (dragging ? dragProgress : current / duration) : 0;
+    const progress = duration > 0
+        ? (dragging || isSeeking) ? dragPct : current / duration
+        : 0;
     const bufPct = duration > 0 ? Math.min(1, buffered / duration) : 0;
-    const tooltipTime = duration > 0 ? (dragging ? dragProgress : progress) * duration : 0;
+    const tooltipTime = dragPct * duration;
 
     return (
         <View
+            ref={barRef}
             style={styles.progressWrapper}
-            onLayout={(e) => { barWidthRef.current = e.nativeEvent.layout.width; }}
+            onLayout={onLayout}
             {...panResponder.panHandlers}
         >
             {/* Tooltip */}
             {dragging && duration > 0 && (
-                <View style={[styles.tooltip, { left: Math.max(20, Math.min(tooltipX - 20, barWidthRef.current - 50)) }]}>
+                <View style={[
+                    styles.tooltip,
+                    {
+                        left: Math.max(20, Math.min(
+                            dragPct * barLayoutRef.current.width - 20,
+                            barLayoutRef.current.width - 50,
+                        )),
+                    },
+                ]}>
                     <Text style={styles.tooltipText}>{formatTime(tooltipTime)}</Text>
                 </View>
             )}
@@ -254,8 +375,20 @@ export default function MediaPlayerScreen() {
     }>();
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { addToHistory, setSeriesProgress } = useMediaStore();
+    const { addToHistory, setSeriesProgress, getProgress } = useMediaStore();
     const client = useRemoteMediaClient();
+    const tasks = useDownloadStore((s) => s.tasks);
+    const items = useDownloadStore((s) => s.items);
+
+    // Resolve remote URL for Cast even when playing an offline file
+    const castUrl = useMemo(() => {
+        if (!params.id) return null;
+        const task = tasks[params.id];
+        if (task?.remoteUrl) return task.remoteUrl;
+        const item = items[params.id];
+        // items don't store remoteUrl but tasks do — just in case
+        return null;
+    }, [params.id, tasks, items]);
 
     const rawUrl = params.url || '';
     const decodedUrl = rawUrl ? decodeURIComponent(rawUrl) : '';
@@ -279,6 +412,48 @@ export default function MediaPlayerScreen() {
     );
     const [showNextCard, setShowNextCard] = useState(false);
     const [nextCountdown, setNextCountdown] = useState(NEXT_EP_COUNTDOWN);
+    const [nextCardDismissed, setNextCardDismissed] = useState(false);
+
+    // Intelligent next episode detection
+    const resolvedNextEpisode = useMemo(() => {
+        // 1. If we already have one from navigation params, use it
+        if (nextEpisode) return nextEpisode;
+
+        // 2. Otherwise, check if this is a series and look in downloads
+        // seriesId might be in params or in the current item snapshot
+        const currentId = params.id;
+        if (!currentId) return null;
+
+        const currentItem = items[currentId];
+        const sId = params.seriesId || currentItem?.seriesId;
+
+        if (sId) {
+            const episodes = Object.values(items).filter(i => i.seriesId === sId && i.itemType === 'episode');
+            const sNum = currentItem?.seasonNumber || (params.season ? parseInt(params.season) : null);
+            const eNum = currentItem?.episodeNumber || (params.nextEpisode ? parseInt(params.nextEpisode) - 1 : null);
+
+            if (sNum !== null && eNum !== null) {
+                // Try next episode same season
+                let next = episodes.find(e => e.seasonNumber === sNum && e.episodeNumber === eNum + 1);
+                if (!next) {
+                    // Try first episode next season
+                    next = episodes.find(e => e.seasonNumber === sNum + 1 && e.episodeNumber === 1);
+                }
+
+                if (next) {
+                    return {
+                        id: next.id,
+                        url: next.localPath,
+                        title: next.title,
+                        season: String(next.seasonNumber),
+                        episode: String(next.episodeNumber),
+                    };
+                }
+            }
+        }
+
+        return null;
+    }, [nextEpisode, params.seriesId, params.id, params.season, params.nextEpisode, items]);
 
     // ── Video / strategy state ─────────────────────────────────────────────
     const [videoKey, setVideoKey] = useState(0);
@@ -297,6 +472,22 @@ export default function MediaPlayerScreen() {
     const [volume, setVolume] = useState(1);
     const [rate, setRate] = useState(1);
     const [resolution, setResolution] = useState<string | null>(null);
+    const [isSeeking, setIsSeeking] = useState(false);
+    const seekPreviewPctRef = useRef(0);
+
+    // ── New feature state ─────────────────────────────────────────────────
+    const [resizeMode, setResizeMode] = useState<ResizeMode>('contain');
+    const [showSleep, setShowSleep] = useState(false);
+    const [sleepRemaining, setSleepRemaining] = useState<number | null>(null);
+    const sleepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const [isPiP, setIsPiP] = useState(false);
+    const [audioTracks, setAudioTracks] = useState<Array<{ id: number; label: string }>>([]);
+    const [textTracks, setTextTracks] = useState<Array<{ id: number; label: string }>>([]);
+    const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
+    const [selectedText, setSelectedText] = useState<number | null>(null);
+    const [showAudioSheet, setShowAudioSheet] = useState(false);
+    const [showTextSheet, setShowTextSheet] = useState(false);
+    const brightnessRef = useRef<number>(1); // original brightness to restore
 
     // ── OSD state ──────────────────────────────────────────────────────────
     const [showOSD, setShowOSD] = useState(true);
@@ -319,6 +510,31 @@ export default function MediaPlayerScreen() {
     const strategyIdxRef = useRef(0); // mirror for use inside callbacks
     const hasFetchedFreshUrl = useRef(false);
 
+    // ── Save progress periodically ────────────────────────────────────────
+    useEffect(() => {
+        if (!params.id || duration <= 0 || currentTime <= 0 || paused) return;
+
+        const interval = setInterval(() => {
+            addToHistory(params.id, currentTime, duration);
+
+            // If it's a series, also update series-level progress
+            if (params.seriesId && params.season) {
+                // We try to estimate current episode from title or params if not explicit
+                const epNum = params.nextEpisode ? parseInt(params.nextEpisode) - 1 : 0;
+                setSeriesProgress(
+                    params.seriesId,
+                    parseInt(params.season),
+                    epNum,
+                    params.id,
+                    currentTime,
+                    duration
+                );
+            }
+        }, 5000);
+
+        return () => clearInterval(interval);
+    }, [params.id, params.seriesId, params.season, params.nextEpisode, currentTime, duration, paused, addToHistory, setSeriesProgress]);
+
     // ─────────────────────────────────────────────────────────────────────
     // Fullscreen / lifecycle
     // ─────────────────────────────────────────────────────────────────────
@@ -334,6 +550,16 @@ export default function MediaPlayerScreen() {
                     await NavigationBar.setVisibilityAsync('hidden');
                     await NavigationBar.setBehaviorAsync('overlay-swipe');
                 }
+                // Save current brightness so we can restore on exit
+                const { brightness } = await Brightness.getPermissionsAsync()
+                    .then(async (perm) => {
+                        if (perm.granted) {
+                            return { brightness: await Brightness.getBrightnessAsync() };
+                        }
+                        return { brightness: 1 };
+                    })
+                    .catch(() => ({ brightness: 1 }));
+                brightnessRef.current = brightness;
             } catch {}
         })();
         return () => {
@@ -341,10 +567,13 @@ export default function MediaPlayerScreen() {
             if (osdTimerRef.current) clearTimeout(osdTimerRef.current);
             if (nextCountdownRef.current) clearInterval(nextCountdownRef.current);
             if (sidebarTimerRef.current) clearTimeout(sidebarTimerRef.current);
+            if (sleepTimerRef.current) clearInterval(sleepTimerRef.current);
             (async () => {
                 try {
                     await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
                     if (Platform.OS === 'android') await NavigationBar.setVisibilityAsync('visible');
+                    // Restore brightness
+                    await Brightness.setBrightnessAsync(brightnessRef.current).catch(() => {});
                 } catch {}
             })();
         };
@@ -355,11 +584,14 @@ export default function MediaPlayerScreen() {
         const sub = BackHandler.addEventListener('hardwareBackPress', () => {
             if (locked) return true;
             if (showSpeed) { setShowSpeed(false); return true; }
+            if (showSleep) { setShowSleep(false); return true; }
+            if (showAudioSheet) { setShowAudioSheet(false); return true; }
+            if (showTextSheet) { setShowTextSheet(false); return true; }
             handleClose();
             return true;
         });
         return () => sub.remove();
-    }, [locked, showSpeed]);
+    }, [locked, showSpeed, showSleep, showAudioSheet, showTextSheet]);
 
     // ─────────────────────────────────────────────────────────────────────
     // URL resolution + strategy
@@ -440,20 +672,23 @@ export default function MediaPlayerScreen() {
     // ─────────────────────────────────────────────────────────────────────
 
     useEffect(() => {
-        if (client && resolvedUrl && !isOffline) {
+        // Use castUrl (remote) if playing offline, otherwise use resolvedUrl
+        const urlToCast = isOffline ? castUrl : resolvedUrl;
+
+        if (client && urlToCast) {
             client.loadMedia({
                 mediaInfo: {
-                    contentUrl: resolvedUrl,
+                    contentUrl: urlToCast,
                     metadata: { title: currentTitle, type: 'movie' },
                 },
                 autoplay: true,
             });
-            try { videoRef.current?.pause(); } catch {}
+            try { videoRef.current?.pause(); } catch { }
             setIsCasting(true);
         } else {
             setIsCasting(false);
         }
-    }, [client]);
+    }, [client, castUrl, resolvedUrl, isOffline]);
 
     // ─────────────────────────────────────────────────────────────────────
     // OSD show / hide
@@ -496,17 +731,49 @@ export default function MediaPlayerScreen() {
         if (d && isFinite(d) && d > 0) setDuration(d);
         const h = data?.naturalSize?.height;
         if (h && h > 0) setResolution(toResLabel(h));
-    }, []);
+
+        // Capture tracks
+        if (data.audioTracks) {
+            setAudioTracks(data.audioTracks.map((t: any) => ({
+                id: t.index,
+                label: t.language || t.title || `Áudio ${t.index + 1}`
+            })));
+        }
+        if (data.textTracks) {
+            setTextTracks(data.textTracks.map((t: any) => ({
+                id: t.index,
+                label: t.language || t.title || `Legenda ${t.index + 1}`
+            })));
+        }
+
+        // Resume progress if exists
+        if (d && d > 0) {
+            const saved = getProgress(params.id);
+            if (saved && saved.progress && saved.progress > 10 && saved.progress < (d - 15)) {
+                videoRef.current?.seek(saved.progress);
+            }
+        }
+    }, [params.id, getProgress]);
 
     const onProgress = useCallback((data: any) => {
         if (!isMountedRef.current) return;
-        setCurrentTime(data.currentTime ?? 0);
+        // Block progress updates while the user is scrubbing the progress bar
+        // so the thumb doesn't fight back against the drag position.
+        if (!isSeeking) {
+            const time = data.currentTime ?? 0;
+            setCurrentTime(time);
+
+            // Intelligent early trigger: 30s before end
+            if (duration > 60 && (duration - time) <= 30 && resolvedNextEpisode && !showNextCard && !nextCardDismissed) {
+                setShowNextCard(true);
+            }
+        }
         const pb = data.playableDuration ?? 0;
         if (pb > 0) setBuffered(pb);
         // Use seekableDuration as fallback if onLoad didn't set duration
         const sd = data.seekableDuration ?? 0;
         if (sd > 0) setDuration((prev) => (prev > 0 ? prev : sd));
-    }, []);
+    }, [isSeeking, duration, resolvedNextEpisode, showNextCard, nextCardDismissed]);
 
     const onVideoTracks = useCallback((data: any) => {
         const tracks = data?.videoTracks ?? [];
@@ -527,7 +794,7 @@ export default function MediaPlayerScreen() {
 
     const onEnd = useCallback(() => {
         if (!isMountedRef.current) return;
-        if (nextEpisode) {
+        if (resolvedNextEpisode) {
             setShowNextCard(true);
             setNextCountdown(NEXT_EP_COUNTDOWN);
             if (nextCountdownRef.current) clearInterval(nextCountdownRef.current);
@@ -542,7 +809,19 @@ export default function MediaPlayerScreen() {
                 });
             }, 1000);
         }
-    }, [nextEpisode]);
+    }, [resolvedNextEpisode, handleNextEpisode]);
+
+    const onPictureInPictureStatusChanged = useCallback((data: { isActive: boolean }) => {
+        setIsPiP(data.isActive);
+    }, []);
+
+    const handleAudioSelect = useCallback((id: number | string) => {
+        setSelectedAudio(id as number);
+    }, []);
+
+    const handleTextSelect = useCallback((id: number | string) => {
+        setSelectedText(id as number);
+    }, []);
 
     // ─────────────────────────────────────────────────────────────────────
     // Playback controls
@@ -550,9 +829,15 @@ export default function MediaPlayerScreen() {
 
     const handleClose = useCallback(() => {
         isMountedRef.current = false;
-        if (params.id) addToHistory(params.id);
+        if (params.id) {
+            addToHistory(params.id, currentTime, duration);
+            if (params.seriesId && params.season) {
+                const epNum = params.nextEpisode ? parseInt(params.nextEpisode) - 1 : 0;
+                setSeriesProgress(params.seriesId, parseInt(params.season), epNum, params.id, currentTime, duration);
+            }
+        }
         router.back();
-    }, [params.id, router, addToHistory]);
+    }, [params.id, params.seriesId, params.season, params.nextEpisode, currentTime, duration, router, addToHistory, setSeriesProgress]);
 
     const togglePause = useCallback(() => {
         setPaused((p) => !p);
@@ -563,23 +848,35 @@ export default function MediaPlayerScreen() {
         videoRef.current?.seek(Math.max(0, t));
     }, []);
 
+    // Called while user is dragging — locks out onProgress updates
+    const handleSeekStart = useCallback((pct: number) => {
+        seekPreviewPctRef.current = pct;
+        setIsSeeking(true);
+    }, []);
+
+    // Called when user releases — commits the seek and unlocks onProgress
+    const handleSeekEnd = useCallback((_pct: number) => {
+        setIsSeeking(false);
+    }, []);
+
     const skipBy = useCallback((delta: number) => {
         seek(currentTime + delta);
     }, [currentTime, seek]);
 
     const handleNextEpisode = useCallback(() => {
-        if (!nextEpisode) return;
+        const next = resolvedNextEpisode;
+        if (!next) return;
         if (nextCountdownRef.current) clearInterval(nextCountdownRef.current);
         setShowNextCard(false);
         if (params.seriesId && params.season) {
             setSeriesProgress(
                 params.seriesId,
                 parseInt(params.season),
-                parseInt(nextEpisode.episode),
-                nextEpisode.id,
+                parseInt(next.episode),
+                next.id,
             );
         }
-        setCurrentTitle(nextEpisode.title);
+        setCurrentTitle(next.title);
         setCurrentTime(0);
         setDuration(0);
         setBuffered(0);
@@ -588,11 +885,39 @@ export default function MediaPlayerScreen() {
         strategyIdxRef.current = 0;
         setStrategyIdx(0);
         hasFetchedFreshUrl.current = false;
-        setActiveUrl(nextEpisode.url);
-        setResolvedUrl(nextEpisode.url);
+        setActiveUrl(next.url);
+        setResolvedUrl(next.url);
         setVideoKey((k) => k + 1);
-    }, [nextEpisode, params.seriesId, params.season, setSeriesProgress]);
+    }, [resolvedNextEpisode, params.seriesId, params.season, setSeriesProgress]);
+    const toggleAspectRatio = useCallback(() => {
+        setResizeMode((prev) => {
+            const idx = RESIZE_MODES.indexOf(prev);
+            return RESIZE_MODES[(idx + 1) % RESIZE_MODES.length];
+        });
+    }, []);
 
+    const startSleepTimer = useCallback((minutes: number) => {
+        if (sleepTimerRef.current) clearInterval(sleepTimerRef.current);
+        let seconds = minutes * 60;
+        setSleepRemaining(seconds);
+
+        sleepTimerRef.current = setInterval(() => {
+            seconds -= 1;
+            if (seconds <= 0) {
+                if (sleepTimerRef.current) clearInterval(sleepTimerRef.current);
+                setSleepRemaining(null);
+                setPaused(true);
+                handleClose();
+            } else {
+                setSleepRemaining(seconds);
+            }
+        }, 1000);
+    }, [handleClose]);
+
+    const cancelSleepTimer = useCallback(() => {
+        if (sleepTimerRef.current) clearInterval(sleepTimerRef.current);
+        setSleepRemaining(null);
+    }, []);
     // ─────────────────────────────────────────────────────────────────────
     // Gestures (PanResponder on whole video area)
     // ─────────────────────────────────────────────────────────────────────
@@ -630,6 +955,10 @@ export default function MediaPlayerScreen() {
                 y: e.nativeEvent.locationY,
                 volume,
             };
+            // Capture current brightness at start of gesture
+            Brightness.getBrightnessAsync().then(b => {
+                gestureStartRef.current.volume = b; // recycling property for brightness
+            }).catch(() => {});
         },
 
         onPanResponderMove: (_e, gs) => {
@@ -646,6 +975,9 @@ export default function MediaPlayerScreen() {
                 setShowVolume(true);
                 setShowBrightness(false);
             } else {
+                // Brightness control (left side)
+                const newBright = Math.max(0, Math.min(1, gestureStartRef.current.volume + delta));
+                Brightness.setBrightnessAsync(newBright).catch(() => {});
                 setShowBrightness(true);
                 setShowVolume(false);
             }
@@ -720,19 +1052,24 @@ export default function MediaPlayerScreen() {
                     ref={videoRef}
                     source={source}
                     style={StyleSheet.absoluteFill}
-                    resizeMode="contain"
+                    resizeMode={resizeMode}
                     paused={paused}
                     rate={rate}
                     volume={volume}
+                    selectedAudioTrack={selectedAudio !== null ? { type: 'index', value: selectedAudio } : undefined}
+                    selectedTextTrack={selectedText !== null ? { type: 'index', value: selectedText } : undefined}
                     controls={false}
                     ignoreSilentSwitch="ignore"
-                    playInBackground={false}
+                    playInBackground={true}
+                    pictureInPicture={isPiP}
+                    enterPictureInPictureOnLeave={true}
                     onLoad={onLoad}
                     onProgress={onProgress}
                     onError={onError}
                     onBuffer={onBuffer}
                     onEnd={onEnd}
                     onVideoTracks={onVideoTracks}
+                    onPictureInPictureStatusChanged={onPictureInPictureStatusChanged}
                     bufferConfig={{
                         minBufferMs: 15000,
                         maxBufferMs: 50000,
@@ -788,14 +1125,15 @@ export default function MediaPlayerScreen() {
             )}
 
             {/* Next episode card */}
-            {showNextCard && nextEpisode && (
+            {showNextCard && resolvedNextEpisode && (
                 <NextEpisodeCard
-                    episode={{ title: nextEpisode.title, subtitle: `T${nextEpisode.season}·E${nextEpisode.episode}` }}
+                    episode={{ title: resolvedNextEpisode.title, subtitle: `T${resolvedNextEpisode.season}·E${resolvedNextEpisode.episode}` }}
                     countdown={nextCountdown}
                     onPlay={handleNextEpisode}
                     onCancel={() => {
                         if (nextCountdownRef.current) clearInterval(nextCountdownRef.current);
                         setShowNextCard(false);
+                        setNextCardDismissed(true);
                     }}
                 />
             )}
@@ -832,9 +1170,21 @@ export default function MediaPlayerScreen() {
                         </View>
 
                         <View style={styles.topRight}>
-                            {!isOffline && (
+                            {(!!castUrl || !isOffline) && (
                                 <CastButton style={styles.castBtn} />
                             )}
+                            <TouchableOpacity
+                                style={styles.iconBtn}
+                                onPress={() => {
+                                    if (Platform.OS === 'android') {
+                                        videoRef.current?.enterPictureInPicture();
+                                    } else {
+                                        setIsPiP(true);
+                                    }
+                                }}
+                            >
+                                <MaterialIcons name="picture-in-picture" size={22} color="#fff" />
+                            </TouchableOpacity>
                             <TouchableOpacity style={styles.iconBtn} onPress={() => setLocked(true)}>
                                 <Ionicons name="lock-open-outline" size={22} color="#fff" />
                             </TouchableOpacity>
@@ -881,6 +1231,9 @@ export default function MediaPlayerScreen() {
                             duration={duration}
                             buffered={buffered}
                             onSeek={seek}
+                            isSeeking={isSeeking}
+                            onSeekStart={handleSeekStart}
+                            onSeekEnd={handleSeekEnd}
                         />
 
                         <View style={styles.toolRow}>
@@ -891,14 +1244,32 @@ export default function MediaPlayerScreen() {
                                 </Text>
                             </TouchableOpacity>
 
+                            <TouchableOpacity style={styles.toolBtn} onPress={() => setShowSleep(true)}>
+                                <Ionicons name="timer-outline" size={19} color="#fff" />
+                                <Text style={styles.toolLabel}>
+                                    {sleepRemaining ? `${Math.ceil(sleepRemaining / 60)}m` : 'Sleep'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.toolBtn} onPress={toggleAspectRatio}>
+                                <MaterialIcons name="aspect-ratio" size={19} color="#fff" />
+                                <Text style={styles.toolLabel}>{RESIZE_LABELS[resizeMode]}</Text>
+                            </TouchableOpacity>
+
                             <View style={styles.toolRight}>
+                                {(audioTracks.length > 0 || textTracks.length > 0) && (
+                                    <TouchableOpacity style={styles.toolBtn} onPress={() => setShowAudioSheet(true)}>
+                                        <MaterialIcons name="subtitles" size={19} color="#fff" />
+                                        <Text style={styles.toolLabel}>Trilhas</Text>
+                                    </TouchableOpacity>
+                                )}
                                 {!isOffline && (
                                     <TouchableOpacity
                                         style={styles.toolBtn}
                                         onPress={() => {
                                             try {
                                                 (videoRef.current as any)?.presentFullscreenPlayer?.();
-                                            } catch {}
+                                            } catch { }
                                         }}
                                     >
                                         <MaterialIcons name="fullscreen" size={22} color="#fff" />
@@ -929,6 +1300,35 @@ export default function MediaPlayerScreen() {
                 current={rate}
                 onSelect={setRate}
                 onClose={() => setShowSpeed(false)}
+            />
+
+            {/* Sleep sheet */}
+            <SleepSheet
+                visible={showSleep}
+                remaining={sleepRemaining}
+                onSelect={startSleepTimer}
+                onCancel={cancelSleepTimer}
+                onClose={() => setShowSleep(false)}
+            />
+
+            {/* Audio track sheet */}
+            <TrackSheet
+                visible={showAudioSheet}
+                title="Trilha de Áudio"
+                tracks={audioTracks}
+                selectedId={selectedAudio}
+                onSelect={handleAudioSelect}
+                onClose={() => setShowAudioSheet(false)}
+            />
+
+            {/* Text track sheet */}
+            <TrackSheet
+                visible={showTextSheet}
+                title="Legendas"
+                tracks={textTracks}
+                selectedId={selectedText}
+                onSelect={handleTextSelect}
+                onClose={() => setShowTextSheet(false)}
             />
         </View>
     );
@@ -1423,5 +1823,43 @@ const styles = StyleSheet.create({
     nextEpCancelText: {
         color: 'rgba(255,255,255,0.5)',
         fontSize: 11,
+    },
+
+    // ── New Styles
+    sleepRemaining: {
+        color: Colors.primary,
+        fontSize: 13,
+        fontWeight: '700',
+        textAlign: 'center',
+        marginBottom: Spacing.md,
+    },
+    sleepCancelBtn: {
+        marginTop: Spacing.xl,
+        paddingVertical: Spacing.md,
+        alignItems: 'center',
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.1)',
+    },
+    sleepCancelText: {
+        color: Colors.error,
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    trackRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: Spacing.md,
+        gap: Spacing.md,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.05)',
+    },
+    trackLabel: {
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 14,
+        fontWeight: '500',
+    },
+    trackLabelActive: {
+        color: '#fff',
+        fontWeight: '700',
     },
 });

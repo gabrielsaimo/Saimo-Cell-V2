@@ -55,20 +55,29 @@ const getRatingColor = (rating?: number) => {
 const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) => {
   const router = useRouter();
   const client = useRemoteMediaClient();
-  const { isFavorite, addFavorite, removeFavorite } = useMediaStore();
+  const { isFavorite, addFavorite, removeFavorite, getProgress, getSeriesProgress } = useMediaStore();
   const [favorite, setFavorite] = useState(isFavorite(item.id));
+
+  // Determine active progress (movie or series)
+  const hasSeries =
+    item.type === 'tv' ||
+    (item.totalSeasons != null && item.totalSeasons > 0) ||
+    (item.episodes != null && Object.keys(item.episodes).length > 0);
+
+  const seriesProgress = useMediaStore(s => s.seriesProgress.find(p => p.seriesId === item.id));
+  const movieProgress = useMediaStore(s => s.watchHistory.find(h => h.id === item.id));
+
+  const activeProgress = hasSeries ? seriesProgress : movieProgress;
+
+  const progressPercent = (activeProgress?.progress && activeProgress?.duration)
+    ? (activeProgress.progress / activeProgress.duration) * 100
+    : 0;
   const [showOptions, setShowOptions] = useState(false);
 
   const dimensions = cardWidth
     ? { width: cardWidth, height: Math.round(cardWidth * 1.5) }
     : SIZES[size];
   const tmdb = item.tmdb;
-
-  // Verificar se é série
-  const hasSeries =
-    item.type === 'tv' ||
-    (item.totalSeasons != null && item.totalSeasons > 0) ||
-    (item.episodes != null && Object.keys(item.episodes).length > 0);
 
   const handlePress = useCallback(() => {
     if (hasSeries) {
@@ -164,6 +173,17 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
         priority={Platform.OS === 'android' ? 'high' : undefined}
       />
       
+      {/* Background Progress Fill Overlay */}
+      {progressPercent > 0 && progressPercent < 95 && (
+        <View 
+          style={[
+            styles.bgProgressFill, 
+            { width: `${progressPercent}%` }
+          ]} 
+          pointerEvents="none" 
+        />
+      )}
+
       {/* Bottom-only overlay for title legibility */}
       <View style={styles.gradient} pointerEvents="none" />
       
@@ -197,6 +217,16 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
         />
       </TouchableOpacity>
       
+      {/* Progress Mini Badge */}
+      {progressPercent > 0 && progressPercent < 95 && (
+        <View style={styles.miniProgressBadge}>
+          <Text style={styles.miniProgressText}>
+            {hasSeries && seriesProgress ? `T${seriesProgress.season}E${seriesProgress.episode} · ` : ''}
+            {Math.round(progressPercent)}%
+          </Text>
+        </View>
+      )}
+
       {/* Type Badge (Movie/TV) */}
       <View style={styles.typeBadge}>
         <Ionicons 
@@ -420,6 +450,44 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     flex: 1,
+  },
+  progressBarContainer: {
+    position: 'absolute',
+    bottom: 50,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    zIndex: 5,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: Colors.primary,
+  },
+  bgProgressFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(99, 102, 241, 0.25)', // Primary with transparency
+    zIndex: 1,
+  },
+  miniProgressBadge: {
+    position: 'absolute',
+    bottom: 53,
+    left: Spacing.sm,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.5)',
+    zIndex: 6,
+  },
+  miniProgressText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
   },
 });
 

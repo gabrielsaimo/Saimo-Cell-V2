@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
+import { useMediaStore } from '../../stores/mediaStore';
 import {
     View,
     Text,
@@ -134,6 +135,9 @@ function MovieDownloadCard({ item }: { item: DownloadItem }) {
         ]);
     }, [item]);
 
+    const progress = useMediaStore(s => s.watchHistory.find(h => h.id === item.id));
+    const pct = (progress?.progress && progress?.duration) ? (progress.progress / progress.duration) * 100 : 0;
+
     return (
         <TouchableOpacity style={styles.movieCard} onPress={handlePlay} activeOpacity={0.8}>
             <Image
@@ -142,6 +146,9 @@ function MovieDownloadCard({ item }: { item: DownloadItem }) {
                 contentFit="cover"
                 cachePolicy="memory-disk"
             />
+            {pct > 0 && pct < 95 && (
+                <View style={[styles.bgProgressFill, { width: `${pct}%` }]} pointerEvents="none" />
+            )}
             <LinearGradient
                 colors={['transparent', 'rgba(0,0,0,0.85)']}
                 style={styles.movieGradient}
@@ -160,6 +167,11 @@ function MovieDownloadCard({ item }: { item: DownloadItem }) {
                     <Ionicons name="trash-outline" size={18} color={Colors.error} />
                 </TouchableOpacity>
             </View>
+            {pct > 0 && pct < 95 && (
+                <View style={styles.miniProgressBadge}>
+                    <Text style={styles.miniProgressText}>{Math.round(pct)}%</Text>
+                </View>
+            )}
             <Text style={styles.movieTitle} numberOfLines={2}>{item.mediaSnapshot.tmdb?.title || item.title}</Text>
             <Text style={styles.movieSize}>{formatBytes(item.fileSize)}</Text>
         </TouchableOpacity>
@@ -181,6 +193,9 @@ function SeriesDownloadRow({ seriesId, episodes }: { seriesId: string; episodes:
         });
     }, [seriesId, router]);
 
+    const seriesProgress = useMediaStore(s => s.seriesProgress.find(p => p.seriesId === seriesId));
+    const pct = (seriesProgress?.progress && seriesProgress?.duration) ? (seriesProgress.progress / seriesProgress.duration) * 100 : 0;
+
     return (
         <TouchableOpacity style={styles.seriesRow} onPress={handlePress} activeOpacity={0.8}>
             <Image
@@ -189,6 +204,9 @@ function SeriesDownloadRow({ seriesId, episodes }: { seriesId: string; episodes:
                 contentFit="cover"
                 cachePolicy="memory-disk"
             />
+            {pct > 0 && pct < 95 && (
+                <View style={[styles.bgProgressFillSeries, { width: `${pct}%` }]} pointerEvents="none" />
+            )}
             <View style={styles.seriesInfo}>
                 <Text style={styles.seriesTitle} numberOfLines={1}>
                     {first.mediaSnapshot.tmdb?.title || first.title}
@@ -196,6 +214,11 @@ function SeriesDownloadRow({ seriesId, episodes }: { seriesId: string; episodes:
                 <Text style={styles.seriesMeta}>
                     {episodes.length} episódio{episodes.length !== 1 ? 's' : ''} · {formatBytes(totalSize)}
                 </Text>
+                {pct > 0 && pct < 95 && (
+                    <Text style={styles.seriesProgressText}>
+                        Parei em: T{seriesProgress.season} E{seriesProgress.episode} · {Math.round(pct)}%
+                    </Text>
+                )}
             </View>
             <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
         </TouchableOpacity>
@@ -590,5 +613,42 @@ const styles = StyleSheet.create({
         fontSize: Typography.body.fontSize,
         textAlign: 'center',
         lineHeight: 22,
+    },
+    bgProgressFill: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(99, 102, 241, 0.2)',
+        zIndex: 1,
+    },
+    miniProgressBadge: {
+        position: 'absolute',
+        top: Spacing.sm,
+        left: Spacing.sm,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        zIndex: 5,
+    },
+    miniProgressText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: '800',
+    },
+    bgProgressFillSeries: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(99, 102, 241, 0.15)',
+        zIndex: 0,
+    },
+    seriesProgressText: {
+        color: Colors.primary,
+        fontSize: 11,
+        fontWeight: '700',
+        marginTop: 4,
     },
 });
