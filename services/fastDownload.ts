@@ -297,6 +297,7 @@ export class FastDownload {
             );
         } catch (err: any) {
             if (this.aborted) throw new Error('aborted');
+            this.abort(); // Cancel remaining chunks!
             throw err;
         }
 
@@ -485,7 +486,7 @@ export class FastDownload {
     /**
      * Prepare the destination file for writing.
      * @param size     Expected total file size.
-     * @param fresh    If true, delete any existing file and create a new sparse file.
+     * @param fresh    If true, delete any existing file and create a new empty file.
      *                 If false (resume), keep the existing file on disk intact.
      */
     private async prepareFile(size: number, fresh: boolean): Promise<void> {
@@ -499,11 +500,14 @@ export class FastDownload {
         }
 
         // Create file if it doesn't exist (no-op if it already does)
-        const file = new File(this.destPath);
-        try {
-            file.create();
-        } catch {
-            // Already exists — that's fine for resume
+        const info = await FileSystemLegacy.getInfoAsync(this.destPath);
+        if (!info.exists) {
+            const file = new File(this.destPath);
+            try {
+                file.create();
+            } catch {
+                // Ignore errors if it was created concurrently
+            }
         }
 
         // Pre-allocate by writing last byte (creates sparse file) — only for fresh starts
@@ -606,6 +610,7 @@ export class FastDownload {
         this.finalUrl = snap.finalUrl;
         this.chunks = snap.chunks.map((c) => ({ ...c }));
         this.multiChunk = snap.multiChunk;
+        this.legacyResumeData = snap.legacyResumeData;
         this.lastReportedBytes = this.chunks.reduce((a, c) => a + c.downloaded, 0);
 
         // Verify the partial file still exists on disk
@@ -637,6 +642,7 @@ export class FastDownload {
             await Promise.all(this.chunks.map((c) => this.fetchChunk(c)));
         } catch (err: any) {
             if (this.aborted) throw new Error('aborted');
+            this.abort(); // Cancel remaining chunks!
             throw err;
         }
 

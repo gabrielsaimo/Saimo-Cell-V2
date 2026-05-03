@@ -38,6 +38,7 @@ const ADULT_CATEGORY_IDS = [
   'hot-adultos-bella-da-semana',
   'hot-adultos-legendado',
   'hot-adultos',
+  'adulto',
 ];
 
 function isAdultContent(item: MediaItem): boolean {

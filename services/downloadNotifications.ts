@@ -3,9 +3,9 @@ import { Platform, Linking, Alert } from 'react-native';
 import { formatBytes, formatEta, formatSpeed } from './downloadUtils';
 import type { DownloadTask } from '../types';
 
-const CHANNEL_PROGRESS = 'downloads-progress';
-const CHANNEL_COMPLETE = 'downloads-complete';
-const CHANNEL_FAILED = 'downloads-failed';
+const CHANNEL_PROGRESS = 'downloads-progress-v2';
+const CHANNEL_COMPLETE = 'downloads-complete-v2';
+const CHANNEL_FAILED = 'downloads-failed-v2';
 
 const PREFIX_PROGRESS = 'dl-prog-';
 const PREFIX_DONE = 'dl-done-';
@@ -45,6 +45,7 @@ export async function initNotifications(): Promise<void> {
             enableVibrate: false,
             showBadge: false,
             lightColor: '#6366F1',
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
 
         await Notifications.setNotificationChannelAsync(CHANNEL_COMPLETE, {
@@ -54,6 +55,7 @@ export async function initNotifications(): Promise<void> {
             enableVibrate: true,
             vibrationPattern: [0, 200],
             lightColor: '#10B981',
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
 
         await Notifications.setNotificationChannelAsync(CHANNEL_FAILED, {
@@ -62,6 +64,7 @@ export async function initNotifications(): Promise<void> {
             sound: 'default',
             enableVibrate: true,
             lightColor: '#EF4444',
+            lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
     }
 

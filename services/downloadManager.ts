@@ -55,7 +55,9 @@ class DownloadManager {
     // IDs of downloads that were auto-paused by background transition.
     // Distinguished from user-initiated pauses so we only auto-resume these.
     private pausedByBackground = new Set<string>();
+    private startingDownloads = new Set<string>();
     private appStateSubscription: { remove(): void } | null = null;
+    private appStateTimeout: NodeJS.Timeout | null = null;
 
     static getInstance(): DownloadManager {
         if (!DownloadManager._instance) {
@@ -80,19 +82,44 @@ class DownloadManager {
         // Reconcile tasks that ran in background while app was closed
         await this._reconcileBackgroundDownloads();
 
-        const { tasks } = useDownloadStore.getState();
+        const { tasks, items } = useDownloadStore.getState();
+        
+        // FIX: Absolute paths (file://...) change when the app sandbox UUID changes 
+        // (common on iOS updates or restarts). We MUST regenerate destPath and localPath
+        // dynamically based on the current documentDirectory.
+        for (const [id, item] of Object.entries(items)) {
+            const currentPath = getDownloadPath(
+                item.itemType,
+                item.itemType === 'movie' ? item.mediaId : item.seriesId ?? item.mediaId,
+                item.itemType === 'episode' ? item.id : undefined,
+                item.localPath // use old path just to extract extension
+            );
+            if (currentPath !== item.localPath) {
+                useDownloadStore.getState().updateItem(id, { localPath: currentPath });
+            }
+        }
+
         for (const task of Object.values(tasks)) {
+            const currentDestPath = getDownloadPath(
+                task.itemType,
+                task.itemType === 'movie' ? task.mediaId : task.seriesId ?? task.mediaId,
+                task.itemType === 'episode' ? task.id : undefined,
+                task.remoteUrl
+            );
+
             // partialize converts downloading→paused before AsyncStorage write, but if the app
             // was killed before that flush completed the task comes back as 'downloading'.
             // Normalize first, then use the effective status for the queue decision.
             const effectiveStatus =
                 task.status === 'downloading' ? 'paused' : task.status;
 
+            const patch: Partial<DownloadTask> = { destPath: currentDestPath };
             if (task.status === 'downloading') {
                 // IMPORTANT: preserve any existing resumableSnapshot so we can resume
                 // from where we left off instead of starting over.
-                useDownloadStore.getState().updateTask(task.id, { status: 'paused' });
+                patch.status = 'paused';
             }
+            useDownloadStore.getState().updateTask(task.id, patch);
 
             // Re-queue paused/queued — NOT failed (user must tap retry explicitly).
             if (
@@ -432,9 +459,19 @@ class DownloadManager {
     }
 
     private _onAppStateChange(nextState: AppStateStatus): void {
+        if (this.appStateTimeout) {
+            clearTimeout(this.appStateTimeout);
+            this.appStateTimeout = null;
+        }
+
         if (nextState === 'background' || nextState === 'inactive') {
-            // App going to background — pause all active JS downloads (they'll die anyway)
-            this._pauseAllForBackground();
+            // Debounce to prevent micro-backgrounds (like pulling down notification shade 
+            // or tapping a notification) from immediately killing the download.
+            // Wait 2 seconds before officially considering the app suspended.
+            this.appStateTimeout = setTimeout(() => {
+                this.appStateTimeout = null;
+                this._pauseAllForBackground();
+            }, 2000);
         } else if (nextState === 'active') {
             // App coming back — resume downloads that were auto-paused
             this._resumeFromBackground();
@@ -522,30 +559,41 @@ class DownloadManager {
     }
 
     private async _startDownload(id: string): Promise<void> {
-        const store = useDownloadStore.getState();
-        const task = store.getTask(id);
-        if (!task) {
+        if (this.startingDownloads.has(id)) {
             this._releaseSlot();
             return;
         }
+        this.startingDownloads.add(id);
 
-        const free = await getFreeSpace();
-        if (free < MIN_FREE_BYTES) {
-            store.updateTask(id, { status: 'failed', error: 'Sem espaço suficiente no dispositivo' });
+        try {
+            const store = useDownloadStore.getState();
+            const task = store.getTask(id);
+            if (!task) {
+                this._releaseSlot();
+                return;
+            }
+
+            const free = await getFreeSpace();
+            if (free < MIN_FREE_BYTES) {
+                store.updateTask(id, { status: 'failed', error: 'Sem espaço suficiente no dispositivo' });
+                this._releaseSlot();
+                return;
+            }
+
+            store.updateTask(id, { status: 'downloading', error: undefined });
+
+            // Strategy: FastDownload (16-chunk multi-range) is FASTER than the native single-connection
+            // background-downloader. Use FastDownload as primary; fall back to native if multi-chunk
+            // fails (server doesn't support Range, or fetch dies in background).
+            // Trade-off: FastDownload runs in JS thread → pauses when app suspended.
+            // Native: slower but persists in background.
+            // Most users keep app open during downloads → optimize for speed by default.
+
+            await this._startJsDownload(id, task);
+        } finally {
+            this.startingDownloads.delete(id);
             this._releaseSlot();
-            return;
         }
-
-        store.updateTask(id, { status: 'downloading', error: undefined });
-
-        // Strategy: FastDownload (16-chunk multi-range) is FASTER than the native single-connection
-        // background-downloader. Use FastDownload as primary; fall back to native if multi-chunk
-        // fails (server doesn't support Range, or fetch dies in background).
-        // Trade-off: FastDownload runs in JS thread → pauses when app suspended.
-        // Native: slower but persists in background.
-        // Most users keep app open during downloads → optimize for speed by default.
-        await this._startJsDownload(id, task);
-        this._releaseSlot();
     }
 
     // ----------------------------------------------------------------

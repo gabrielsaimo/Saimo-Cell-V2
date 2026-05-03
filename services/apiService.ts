@@ -348,12 +348,35 @@ export async function getFilmography(params: {
  * Retorna Map<categoryId, items>
  */
 export async function loadAllPreviews(): Promise<Map<string, MediaItem[]>> {
+    // Helper para injetar a categoria adulto
+    const ensureAdultCategory = async (resultMap: Map<string, MediaItem[]>) => {
+        if (!HOME_CACHE.has('adulto')) {
+            try {
+                const adultData = await getCatalog({ p_category: 'adulto', p_page: 1, p_is_adult: true });
+                if (adultData.items && adultData.items.length > 0) {
+                    const items = adultData.items.slice(0, 20);
+                    HOME_CACHE.set('adulto', items);
+                    resultMap.set('adulto', items);
+                    saveCatalogToDisk();
+                }
+            } catch (e) {
+                console.warn('[API] Falha ao carregar categoria adulto:', e);
+            }
+        }
+    };
+
     // 1. Cache em memória (mais rápido)
-    if (HOME_CACHE.size > 0) return new Map(HOME_CACHE);
+    if (HOME_CACHE.size > 0) {
+        const resultMap = new Map(HOME_CACHE);
+        await ensureAdultCategory(resultMap);
+        return resultMap;
+    }
 
     // 2. Cache em disco (persiste entre sessões, TTL 12h)
     if (loadCatalogFromDisk() && HOME_CACHE.size > 0) {
-        return new Map(HOME_CACHE);
+        const resultMap = new Map(HOME_CACHE);
+        await ensureAdultCategory(resultMap);
+        return resultMap;
     }
 
     // 3. Busca na API Supabase
@@ -365,6 +388,8 @@ export async function loadAllPreviews(): Promise<Map<string, MediaItem[]>> {
         HOME_CACHE.set(cat.id, items);
         result.set(cat.id, items);
     }
+
+    await ensureAdultCategory(result);
 
     // Salva em disco para próxima sessão
     saveCatalogToDisk();
@@ -383,7 +408,7 @@ export async function fetchCategoryPage(
     if (CATALOG_CACHE.has(cacheKey)) return CATALOG_CACHE.get(cacheKey)!;
 
     try {
-        const data = await getCatalog({ p_category: categoryId, p_page: page });
+        const data = await getCatalog({ p_category: categoryId, p_page: page, p_is_adult: true });
         CATALOG_CACHE.set(cacheKey, data.items);
 
         // Atualiza cache consolidado da categoria

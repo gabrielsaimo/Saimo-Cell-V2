@@ -56,6 +56,11 @@ export default function RootLayout() {
           return;
         }
       }
+      if (data.type === 'progress') {
+        // Tapping the ongoing progress notification should NOT do anything 
+        // (the user specifically requested it to not interfere/open).
+        return;
+      }
 
       // Default: open downloads tab
       router.push('/(tabs)/downloads' as any);

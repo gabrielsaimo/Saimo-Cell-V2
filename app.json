@@ -71,7 +71,7 @@
       [
         "react-native-google-cast",
         {
-          "receiverAppId": "CC1AD845" 
+          "receiverAppId": "CC1AD845"
         }
       ],
       "./plugins/withPictureInPicture",
@@ -113,7 +113,8 @@
             "enableBitcode": false
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

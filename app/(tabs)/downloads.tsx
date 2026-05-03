@@ -31,14 +31,10 @@ function ActiveDownloadCard({ task }: { task: DownloadTask }) {
     const isFailed = task.status === 'failed';
 
     const handleAction = useCallback(() => {
-        if (isDownloading) {
-            downloadManager.pause(task.id);
-        } else if (isPaused) {
-            downloadManager.resume(task.id);
-        } else if (isFailed) {
+        if (isFailed) {
             downloadManager.retry(task.id);
         }
-    }, [task.id, isDownloading, isPaused, isFailed]);
+    }, [task.id, isFailed]);
 
     const handleCancel = useCallback(() => {
         Alert.alert('Cancelar download?', task.title, [
@@ -61,7 +57,7 @@ function ActiveDownloadCard({ task }: { task: DownloadTask }) {
 
     const pct = Math.round(task.progress * 100);
     const barColor = isFailed ? Colors.error : Colors.primary;
-    const actionIcon = isDownloading ? 'pause' : isFailed ? 'refresh' : 'play';
+    const actionIcon = isFailed ? 'refresh' : undefined;
     const actionColor = isFailed ? Colors.error : Colors.primary;
 
     return (
@@ -99,10 +95,10 @@ function ActiveDownloadCard({ task }: { task: DownloadTask }) {
             </View>
 
             <View style={styles.activeActions}>
-                {/* Show action button for: downloading (pause), paused (play), failed (retry) */}
-                {(isDownloading || isPaused || isFailed) && (
+                {/* Show action button for: failed (retry) */}
+                {isFailed && (
                     <TouchableOpacity onPress={handleAction} style={styles.actionBtn}>
-                        <Ionicons name={actionIcon as any} size={20} color={actionColor} />
+                        <Ionicons name="refresh" size={20} color={actionColor} />
                     </TouchableOpacity>
                 )}
                 <TouchableOpacity onPress={handleCancel} style={styles.actionBtn}>
