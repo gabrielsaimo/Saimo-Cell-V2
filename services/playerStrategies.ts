@@ -41,6 +41,9 @@ export function detectSourceType(url: string): string | undefined {
     if (lower.endsWith('.mov')) return 'mov';
     if (lower.endsWith('.webm')) return 'webm';
     if (lower.endsWith('.ts')) return 'mp2t';
+    // IPTV streams — numeric channel ID as last path segment (e.g. /user/pass/3)
+    const lastSegment = lower.split('?')[0].split('/').pop() ?? '';
+    if (/^\d+$/.test(lastSegment)) return 'mp2t';
     // Local files (file://) without a recognized extension — treat as generic video
     if (lower.startsWith('file://')) return 'mp4';
     return undefined;

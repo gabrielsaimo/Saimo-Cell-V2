@@ -27,7 +27,9 @@
         ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "NSPhotoLibraryAddUsageDescription": "Saimo TV salva seus downloads na Galeria para você assistir offline em outros apps.",
+        "NSPhotoLibraryUsageDescription": "Saimo TV organiza seus downloads em um álbum na Galeria."
       }
     },
     "android": {
@@ -44,7 +46,9 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_DATA_SYNC",
         "RECEIVE_BOOT_COMPLETED",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "READ_MEDIA_VIDEO",
+        "READ_MEDIA_IMAGES"
       ]
     },
     "web": {
@@ -114,7 +118,15 @@
           }
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Saimo TV organiza seus downloads em um álbum na Galeria.",
+          "savePhotosPermission": "Saimo TV salva seus downloads na Galeria para você assistir offline em outros apps.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

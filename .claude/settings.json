@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js|json\\)$\")",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")",
+      "Bash(node node_modules/.bin/expo install expo-media-library)",
+      "Bash(npm info *)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/gabrielsaimo/Saimo-TV/main/public/data/lista_pro.json\")",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -I \"http://aguasdecoco.cdnxjp.space:80/03985093485/903482930834/3\")",
+      "Bash(curl -s -I \"http://216.106.180.56/03985093485/903482930834/3\")",
+      "Bash(curl -s \"http://aguasdecoco.cdnxjp.space:80/03985093485/903482930834/3\" -L --max-time 3)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d.get\\('expo',{}\\).get\\('name'\\)\\); print\\(d.get\\('expo',{}\\).get\\('version'\\)\\); print\\(d.get\\('expo',{}\\).get\\('android',{}\\).get\\('package'\\)\\)\")",
+      "Bash(eas --version)",
+      "Bash(rm -rf /Users/gabrielespindola/.gradle/caches/build-cache-*)",
+      "Bash(rm -rf /Users/gabrielespindola/.gradle/caches/transforms-*)",
+      "Bash(rm -rf /Users/gabrielespindola/.gradle/caches/modules-2 && rm -rf /Users/gabrielespindola/Dev/Saimo-Cell-V2/android/app/.cxx && rm -rf /Users/gabrielespindola/Dev/Saimo-Cell-V2/android/app/build && df -h /)",
+      "Bash(./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a)"
+    ],
+    "additionalDirectories": [
+      "/Users/gabrielespindola/.gradle/caches/modules-2"
+    ]
+  }
+}

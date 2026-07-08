@@ -222,6 +222,7 @@ export interface DownloadItem {
     episodeNumber?: number;
     mediaSnapshot: DownloadMediaSnapshot;
     downloadedAt: number;
+    galleryAssetId?: string;
 }
 
 export interface DownloadTask {
