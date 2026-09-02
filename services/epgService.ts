@@ -309,6 +309,92 @@ async function extractProgrammes(xml: string, targetIds: Set<string>): Promise<v
     console.log(`[EPG] Scanned ${processed} programmes, kept ${kept} for ${channelPrograms.size} channels`);
 }
 
+// ─── Reserva: guiadetv.com ─────────────────────────────────────────────────────
+//
+// O feed XMLTV não lista Sony Movies (nem mais cinco canais do catálogo:
+// SBT News, Terra Viva, Box Kids TV, X Sports, N Sports) — varri as sete
+// categorias do guiadetv.com para achar quem tinha página lá. Só entra para
+// quem o feed já não trouxe nada; os prefixados "gdt:" nunca colidem com um
+// id do XMLTV, então injetar direto em `channelPrograms`/`resolvedIds` é
+// seguro mesmo sem esses dois mapas saberem da existência um do outro.
+
+const GUIADETV_SLUGS: Record<string, string> = {
+    'sony movies': 'sony-movies',
+    'sbt news': 'sbt-news',
+    'terra viva': 'terra-viva',
+    'box kids tv': 'box-kids',
+    'x sports': 'xsports',
+    'n sports': 'nsports',
+};
+
+/**
+ * `data-dt="AAAA-MM-DD HH:MM:SS-03:00"` seguido, adiante, de um link
+ * `/programa/...` cujo texto é o título. O fim não é publicado — mesma regra
+ * do resto do guia: vai até o próximo começar.
+ */
+function parseGuiaDeTv(html: string, channelId: string): Program[] {
+    const padrao = /data-dt="(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}[^"]*"[\s\S]*?<a[^>]*href="[^"]*programa\/[^"]+"[^>]*>[\s\S]*?([A-Za-zÀ-ÿ0-9][^<]{2,150})/g;
+
+    const vistos = new Map<number, string>();
+    for (const m of html.matchAll(padrao)) {
+        const [, ano, mes, dia, hora, minuto] = m;
+        // O guiadetv publica sempre em horário de Brasília (-03:00, sem
+        // horário de verão desde 2019). `new Date(y,m,d,h,min)` leria isso no
+        // fuso do aparelho — certo só por acaso, para quem está no Brasil.
+        const inicio = Date.UTC(Number(ano), Number(mes) - 1, Number(dia), Number(hora) + 3, Number(minuto));
+        const titulo = dec(m[6]).trim().replace(/\s+/g, ' ');
+        if (titulo.length < 2) continue;
+        // O mesmo instante pode repetir na página — o link do programa carrega
+        // metadados extras que também casam com o padrão.
+        if (!vistos.has(inicio)) vistos.set(inicio, titulo);
+    }
+
+    const ordenados = [...vistos.entries()].sort((a, b) => a[0] - b[0]);
+    return ordenados.map(([inicio, titulo], posicao) => {
+        const fim = posicao + 1 < ordenados.length ? ordenados[posicao + 1][0] : inicio + 3_600_000;
+        return {
+            id: `${channelId}-${inicio}`,
+            title: titulo,
+            description: '',
+            category: '',
+            startTime: new Date(inicio),
+            endTime: new Date(fim),
+        };
+    });
+}
+
+/** Busca o guiadetv só para quem ficou sem programação nenhuma do feed. */
+async function fillGuiaDeTvGaps(): Promise<void> {
+    const alvos = [...appChannelNames.entries()].filter(([appId, name]) => {
+        if (getChannelEPG(appId).length > 0) return false;
+        return norm(name) in GUIADETV_SLUGS;
+    });
+    if (!alvos.length) return;
+
+    let algumPreenchido = false;
+    await Promise.all(alvos.map(async ([appId, name]) => {
+        const slug = GUIADETV_SLUGS[norm(name)];
+        const synthId = `gdt:${slug}`;
+        try {
+            const res = await fetch(`https://www.guiadetv.com/canal/${slug}`);
+            if (!res.ok) return;
+            const html = await res.text();
+            const programas = parseGuiaDeTv(html, synthId);
+            if (!programas.length) return;
+            channelPrograms.set(synthId, programas);
+            resolvedIds.set(appId, synthId);
+            algumPreenchido = true;
+        } catch {
+            // Sem sorte desta vez; a próxima recarga tenta de novo.
+        }
+    }));
+
+    if (algumPreenchido) {
+        console.log(`[EPG] guiadetv preencheu ${alvos.length} lacuna(s)`);
+        notifyUpdate();
+    }
+}
+
 // ─── Load ─────────────────────────────────────────────────────────────────────
 
 async function doLoadSync(xml: string): Promise<void> {
@@ -335,6 +421,7 @@ async function doLoadSync(xml: string): Promise<void> {
         setState('loaded');
         console.log(`[EPG] Load complete - ${channelPrograms.size} channels`);
         notifyUpdate();
+        void fillGuiaDeTvGaps();
 
         // If channels registered during loading, reload to pick them up
         if (appChannelNames.size > channelsAtStart || needsReload) {
