@@ -463,62 +463,16 @@ async function loadSeriesEpisodes(item: MediaItem, letter: string): Promise<Medi
   return { ...item, episodes, totalSeasons: Object.keys(episodes).length };
 }
 
-interface CinemetaMeta {
-  id?: string;
-  name?: string;
-  poster?: string;
-  background?: string;
-  description?: string;
-  releaseInfo?: string;
-  imdbRating?: string;
-  genres?: string[];
-  runtime?: string;
-}
-
-const metaCache = new Map<string, Partial<TMDBData>>();
-
-export function cleanCinemetaTitle(title: string): string {
-  return title
-    .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/\((?!(?:19|20)\d{2}\))[^)]*\)/g, ' ')
-    .replace(/\b(4k|uhd|fhd|hd|sd|h265|hevc|hdr|dv|dual|remux|legendado|dublado|leg|dub)\b/gi, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-export async function getCinemetaData(title: string, series: boolean): Promise<Partial<TMDBData>> {
-  const key = `${series ? 's' : 'm'}:${title}`;
-  const cached = metaCache.get(key);
-  if (cached) return cached;
-  const cleaned = cleanCinemetaTitle(title);
-  if (cleaned.length < 2) return {};
-  try {
-    const url = `https://v3-cinemeta.strem.io/catalog/${series ? 'series' : 'movie'}/top/search=${encodeURIComponent(cleaned)}.json`;
-    const response = await fetch(url, { headers: { 'User-Agent': DEFAULT_USER_AGENT } });
-    if (!response.ok) return {};
-    const json = (await response.json()) as { metas?: CinemetaMeta[] };
-    const meta = json.metas?.[0];
-    if (!meta) return {};
-    const result: Partial<TMDBData> = {
-      imdbId: meta.id,
-      title: meta.name || title,
-      overview: meta.description || '',
-      year: meta.releaseInfo || /(?:19|20)\d{2}/.exec(title)?.[0] || '',
-      rating: Number(meta.imdbRating) || 0,
-      genres: meta.genres || [],
-      poster: meta.poster || '',
-      backdrop: meta.background || '',
-      runtime: Number.parseInt(meta.runtime || '', 10) || undefined,
-    };
-    metaCache.set(key, result);
-    return result;
-  } catch {
-    return {};
-  }
-}
+// Buscava no Cinemeta e ficava com o primeiro resultado, sem comparar nome
+// nenhum. `getTMDBData` (services/tmdbService.ts) pontua por título, ano e
+// popularidade com o mesmo algoritmo do api-saimo-tv, que alimenta o
+// catálogo do Supabase — o nome `getCinemetaData` ficou só para não mexer
+// nos dois lugares que já chamam por ele.
+import { getTMDBData, clearTMDBCache } from './tmdbService';
+export { getTMDBData as getCinemetaData } from './tmdbService';
 
 export async function enrichVodItem(item: MediaItem): Promise<MediaItem> {
-  const meta = await getCinemetaData(item.name, item.type === 'tv');
+  const meta = await getTMDBData(item.name, item.type === 'tv');
   return { ...item, tmdb: { ...basicTmdb(item.name, item.tmdb?.year), ...item.tmdb, ...meta } };
 }
 
@@ -571,7 +525,7 @@ export async function searchVod(query: string, type?: 'movie' | 'series'): Promi
 export async function clearSaimoSourceCache(): Promise<void> {
   vodIndex = null;
   searchIndex = null;
-  metaCache.clear();
+  clearTMDBCache();
   const keys = await AsyncStorage.getAllKeys();
   const sourceKeys = keys.filter(key => key.startsWith(CACHE_PREFIX));
   if (sourceKeys.length) await AsyncStorage.multiRemove(sourceKeys);
