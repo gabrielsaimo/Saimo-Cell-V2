@@ -70,6 +70,10 @@ export default function HomeScreen() {
   }, [allChannels, searchQuery]);
 
   useEffect(() => {
+    if (proChannels.length === 0) fetchProChannels();
+  }, [fetchProChannels, proChannels.length]);
+
+  useEffect(() => {
     const unsubProg = onEPGProgress((progress, loaded, total) => {
       setEpgProgress({ progress, loaded, total });
     });

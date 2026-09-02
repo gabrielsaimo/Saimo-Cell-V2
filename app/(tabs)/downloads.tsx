@@ -19,6 +19,7 @@ import { useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { downloadManager } from '../../services/downloadManager';
+import { openDownload } from '../../services/playDownload';
 import { formatBytes, formatEta, formatSpeed } from '../../services/downloadUtils';
 import type { DownloadItem, DownloadTask } from '../../types';
 
@@ -117,14 +118,11 @@ function MovieDownloadCard({ item }: { item: DownloadItem }) {
     const router = useRouter();
 
     const handlePlay = useCallback(() => {
-        router.push({
-            pathname: '/media-player/[id]' as any,
-            params: {
-                id: item.id,
-                url: encodeURIComponent(item.localPath),
-                title: item.title,
-                offline: '1',
-            },
+        openDownload(item, router, {
+            id: item.id,
+            url: encodeURIComponent(item.localPath),
+            title: item.title,
+            offline: '1',
         });
     }, [item, router]);
 
@@ -214,7 +212,7 @@ function SeriesDownloadRow({ seriesId, episodes }: { seriesId: string; episodes:
                 <Text style={styles.seriesMeta}>
                     {episodes.length} episódio{episodes.length !== 1 ? 's' : ''} · {formatBytes(totalSize)}
                 </Text>
-                {pct > 0 && pct < 95 && (
+                {seriesProgress && pct > 0 && pct < 95 && (
                     <Text style={styles.seriesProgressText}>
                         Parei em: T{seriesProgress.season} E{seriesProgress.episode} · {Math.round(pct)}%
                     </Text>

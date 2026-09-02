@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import type { Channel, CategoryId } from '../types';
-import { channels, adultChannels, categoryOrder, getChannelsByCategory } from '../data/channels';
+import { channels, adultChannels, categoryOrder, setRemoteChannels } from '../data/channels';
 import { registerChannel } from '../services/epgService';
+import { loadRemoteChannels, mergeChannels } from '../services/saimoSources';
 
 function sortKey(s: string): string {
     return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -22,7 +23,7 @@ interface ChannelStore {
     setSearchQuery: (query: string) => void;
     setLoading: (loading: boolean) => void;
     setProList: (isPro: boolean) => void;
-    fetchProChannels: () => Promise<void>;
+    fetchProChannels: (force?: boolean) => Promise<void>;
 
     // Seletores
     getFilteredChannels: (includeAdult: boolean, favorites: string[]) => Channel[];
@@ -34,7 +35,8 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
     currentChannelId: null,
     searchQuery: '',
     isLoading: false,
-    isProList: false,
+    // A lista compartilhada é a principal a partir da 1.4.
+    isProList: true,
     proChannels: [],
 
     setCategory: (category) => {
@@ -57,13 +59,14 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
         set({ isProList: isPro, selectedCategory: 'Todos' });
     },
 
-    fetchProChannels: async () => {
+    fetchProChannels: async (force = false) => {
         try {
             set({ isLoading: true });
-            const res = await fetch('https://raw.githubusercontent.com/gabrielsaimo/Saimo-TV/main/public/data/lista_pro.json');
-            const data: Channel[] = await res.json();
-            // Register all pro channels with EPG service for name-based matching
+            // A lista publicada manda. O catálogo empacotado entra somente no
+            // fim, como última reserva para uma origem temporariamente fora.
+            const data = mergeChannels(await loadRemoteChannels(force), [...channels, ...adultChannels]);
             data.forEach(ch => registerChannel(ch.id, ch.name));
+            setRemoteChannels(data);
             set({ proChannels: data, isLoading: false });
         } catch (error) {
             console.error('Failed to fetch pro channels:', error);

@@ -1,549 +1,154 @@
-// Serviço de API Supabase — substitui o streamingService baseado em JSON do GitHub
+/** Adaptador do catálogo compartilhado por SaimoPlayer e SaimoTV-Android. */
 import type { MediaItem } from '../types';
-import { Paths, File as FSFile, Directory } from 'expo-file-system';
-
-const ANON_KEY =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmdW1heXBxaHh6anNzYXJteXJuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0MDU1ODUsImV4cCI6MjA4Nzk4MTU4NX0.Ff3DMipcepJuFXuhaXLsievmPG-Czu6FutHZJVxJTO8';
-const BASE_URL = 'https://sfumaypqhxzjssarmyrn.supabase.co/rest/v1/rpc';
-
-// ============================================================
-// Tipos internos da API
-// ============================================================
-
-interface APITMDBSlim {
-    id: number;
-    title: string;
-    year: string;
-    rating: number;
-    certification: string | null;
-    poster: string;
-    posterHD: string;
-    backdrop: string;
-    backdropHD: string;
-}
-
-interface APITMDBFull extends APITMDBSlim {
-    originalTitle: string;
-    overview: string;
-    releaseDate: string;
-    voteCount: number;
-    genres: string[];
-    directors: string[];
-    cast: { id: number; name: string; character: string; photo: string | null }[];
-}
-
-interface APISlimItem {
-    id: string;
-    name: string;
-    type: 'movie' | 'series';
-    category: string;
-    categoryLabel: string;
-    isAdult: boolean;
-    logo: string;
-    totalSeasons: number | null;
-    totalEpisodes: number | null;
-    tmdb: APITMDBSlim;
-}
-
-interface APIFullItem extends Omit<APISlimItem, 'tmdb'> {
-    url: string;
-    active: boolean;
-    tmdb: APITMDBFull;
-    episodes?: {
-        [season: string]: { id: string; episode: number; name: string; url: string; logo: string | null }[];
-    };
-}
-
-interface APIHomeCategory {
-    id: string;
-    label: string;
-    type: 'movie' | 'series';
-    items: APISlimItem[];
-}
-
-interface APICatalogResult {
-    items: APISlimItem[];
-    total: number;
-    page: number;
-    totalPages: number;
-}
+import {
+  clearSaimoSourceCache, getVodItem, loadVodCategory, loadVodIndex,
+  parseVodId, searchVod,
+} from './saimoSources';
 
 export interface APICategories {
-    movies: { id: string; label: string; count: number }[];
-    series: { id: string; label: string; count: number }[];
+  movies: { id: string; label: string; count: number }[];
+  series: { id: string; label: string; count: number }[];
+}
+export interface CatalogResult {
+  items: MediaItem[]; total: number; page: number; totalPages: number;
 }
 
-// ============================================================
-// Cache em disco — catálogo (TTL 12h)
-// ============================================================
-
-const CATALOG_DISK_TTL = 12 * 60 * 60 * 1000; // 12 horas
-let _catalogDir: Directory | null = null;
-let _catalogDiskReady = false;
-
-interface CatalogDiskEntry {
-    savedAt: number;
-    categories: { id: string; items: MediaItem[] }[];
-}
-
-function getCatalogDir(): Directory {
-    if (!_catalogDir) {
-        _catalogDir = new Directory(Paths.document, 'catalog');
-    }
-    return _catalogDir;
-}
-
-function ensureCatalogDisk(): boolean {
-    if (_catalogDiskReady) return true;
-    try {
-        const dir = getCatalogDir();
-        if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-        _catalogDiskReady = true;
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-// Controle de save agendado (evita múltiplos saves em sequência)
-let _savePending = false;
-
-function saveCatalogToDisk(): void {
-    // Agrupa chamadas em 2s — salva apenas uma vez após o último trigger
-    if (_savePending) return;
-    _savePending = true;
-    setTimeout(() => {
-        _savePending = false;
-        try {
-            if (!ensureCatalogDisk() || HOME_CACHE.size === 0) return;
-            // Limita a 20 itens por categoria para manter o arquivo pequeno (<300KB)
-            const categories = Array.from(HOME_CACHE.entries()).map(([id, items]) => ({
-                id,
-                items: items.slice(0, 20),
-            }));
-            const entry: CatalogDiskEntry = { savedAt: Date.now(), categories };
-            const file = new FSFile(getCatalogDir(), 'home.json');
-            file.create({ overwrite: true });
-            file.write(JSON.stringify(entry));
-        } catch (e) {
-            console.warn('[CatalogDisk] saveCatalogToDisk falhou:', e);
-        }
-    }, 2000); // 2s após o último trigger, fora do ciclo de render crítico
-}
-
-function loadCatalogFromDisk(): boolean {
-    try {
-        if (!ensureCatalogDisk()) return false;
-        const file = new FSFile(getCatalogDir(), 'home.json');
-        if (!file.exists || file.size === 0) return false;
-        const raw = file.textSync();
-        if (!raw || raw.length < 10) return false;
-        const entry: CatalogDiskEntry = JSON.parse(raw);
-        if (Date.now() - entry.savedAt > CATALOG_DISK_TTL) return false; // expirado
-        for (const { id, items } of entry.categories) {
-            HOME_CACHE.set(id, items);
-        }
-        console.log(`[CatalogDisk] Carregado do disco: ${HOME_CACHE.size} categorias`);
-        return true;
-    } catch (e) {
-        console.warn('[CatalogDisk] loadCatalogFromDisk falhou:', e);
-        return false;
-    }
-}
-
-function clearCatalogDisk(): void {
-    try {
-        const dir = getCatalogDir();
-        if (dir.exists) dir.delete();
-        _catalogDiskReady = false;
-    } catch (e) {
-        console.warn('[CatalogDisk] clearCatalogDisk falhou:', e);
-    }
-}
-
-// ============================================================
-// Cache em memória
-// ============================================================
-
-// Cache de home: categoryId → items (dados slim normalizados)
-const HOME_CACHE = new Map<string, MediaItem[]>();
-
-// Cache de catálogo paginado: "categoryId-pN" → items
-const CATALOG_CACHE = new Map<string, MediaItem[]>();
-
-// Controle de paginação: categoryId → { totalPages, lastPage }
-const CAT_PAGES = new Map<string, { totalPages: number; lastPage: number }>();
-
-// Cache de itens completos: id → MediaItem (máx 10 — séries com episódios são pesadas)
+const CATEGORY_CACHE = new Map<string, MediaItem[]>();
 const ITEM_CACHE = new Map<string, MediaItem>();
-const ITEM_CACHE_MAX = 10;
+const PAGE_SIZE = 50;
+const PREVIEW_SIZE = 20;
+let stopRequested = false;
 
-// Categorias disponíveis (resultado do get_categories)
-let _categories: APICategories | null = null;
-
-// Flag de controle do background loading
-let _stopBackground = false;
-
-// ============================================================
-// RPC helper — with in-flight dedup
-// ============================================================
-
-const _inflight = new Map<string, Promise<any>>();
-
-async function rpc<T = any>(fn: string, body: Record<string, any> = {}): Promise<T> {
-    const key = `${fn}:${JSON.stringify(body)}`;
-    if (_inflight.has(key)) return _inflight.get(key)! as Promise<T>;
-
-    const promise = fetch(`${BASE_URL}/${fn}`, {
-        method: 'POST',
-        headers: {
-            apikey: ANON_KEY,
-            Authorization: `Bearer ${ANON_KEY}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-    })
-        .then(res => {
-            if (!res.ok) throw new Error(`[API] Erro ${res.status} em ${fn}`);
-            return res.json() as Promise<T>;
-        })
-        .finally(() => _inflight.delete(key));
-
-    _inflight.set(key, promise);
-    return promise;
+function categoryParts(categoryId: string): { type: 'movie' | 'series'; letter: string } | null {
+  const match = /^(filmes|series)-(.+)$/.exec(categoryId);
+  return match ? { type: match[1] === 'series' ? 'series' : 'movie', letter: match[2] } : null;
 }
 
-// ============================================================
-// Normalização: formato da API → MediaItem
-// ============================================================
-
-function normalizeItem(obj: APISlimItem | APIFullItem): MediaItem {
-    const full = obj as APIFullItem;
-    const tmdbFull = obj.tmdb as APITMDBFull;
-    return {
-        id: obj.id,
-        name: obj.name,
-        url: full.url || '',
-        category: obj.category,
-        categoryLabel: obj.categoryLabel,
-        // Normaliza 'series' → 'tv' para compatibilidade com o código existente
-        type: obj.type === 'series' ? 'tv' : 'movie',
-        isAdult: obj.isAdult,
-        logo: obj.logo,
-        totalSeasons: obj.totalSeasons ?? undefined,
-        totalEpisodes: obj.totalEpisodes ?? undefined,
-        episodes: full.episodes
-            ? Object.fromEntries(
-                Object.entries(full.episodes).map(([s, eps]) => [
-                    s,
-                    eps.map(e => ({ ...e, logo: e.logo ?? undefined })),
-                ])
-            )
-            : undefined,
-        tmdb: obj.tmdb
-            ? {
-                  id: obj.tmdb.id,
-                  title: obj.tmdb.title || obj.name,
-                  year: obj.tmdb.year || '',
-                  rating: obj.tmdb.rating || 0,
-                  certification: obj.tmdb.certification || undefined,
-                  poster: obj.tmdb.poster || '',
-                  posterHD: obj.tmdb.posterHD,
-                  backdrop: obj.tmdb.backdrop,
-                  backdropHD: obj.tmdb.backdropHD,
-                  // Campos completos — só presentes em get_item
-                  originalTitle: tmdbFull.originalTitle,
-                  overview: tmdbFull.overview || '',
-                  releaseDate: tmdbFull.releaseDate,
-                  voteCount: tmdbFull.voteCount,
-                  genres: tmdbFull.genres || [],
-                  directors: tmdbFull.directors,
-                  cast: tmdbFull.cast || [],
-              }
-            : undefined,
-    };
+async function allCategoryIds(): Promise<string[]> {
+  const index = await loadVodIndex();
+  return index.entries.flatMap(entry => [`filmes-${entry.letter}`, `series-${entry.letter}`]);
 }
 
-// ============================================================
-// Endpoints públicos da API
-// ============================================================
-
-/** get_home — tela inicial com categorias e seus itens slim */
-export async function getHome(params: {
-    p_type?: 'movie' | 'series' | null;
-    p_limit?: number;
-    p_order_by?: 'rating' | 'new' | 'name';
-} = {}): Promise<APIHomeCategory[]> {
-    return rpc<APIHomeCategory[]>('get_home', params);
+async function loadCategoryInternal(categoryId: string, force = false): Promise<MediaItem[]> {
+  if (!force && CATEGORY_CACHE.has(categoryId)) return CATEGORY_CACHE.get(categoryId)!;
+  const parts = categoryParts(categoryId);
+  if (!parts) return [];
+  const items = await loadVodCategory(parts.type, parts.letter, force);
+  CATEGORY_CACHE.set(categoryId, items);
+  for (const item of items) ITEM_CACHE.set(item.id, item);
+  return items;
 }
 
-/** get_catalog — catálogo paginado com filtros. Retorna itens já normalizados */
+export async function getHome(params: { p_items_per_category?: number; p_is_adult?: boolean } = {}) {
+  const limit = params.p_items_per_category ?? PREVIEW_SIZE;
+  const loaded = await loadAllPreviews(limit);
+  return {
+    categories: [...loaded.entries()].map(([id, items]) => ({
+      id, label: items[0]?.categoryLabel || id,
+      type: id.startsWith('series-') ? 'series' as const : 'movie' as const,
+      items: items.slice(0, limit),
+    })),
+  };
+}
+
 export async function getCatalog(params: {
-    p_type?: 'movie' | 'series' | null;
-    p_category?: string | null;
-    p_page?: number;
-    p_search?: string | null;
-    p_actor?: string | null;
-    p_order_by?: 'name' | 'rating' | 'new';
-    p_is_adult?: boolean;
-} = {}): Promise<{ items: MediaItem[]; total: number; page: number; totalPages: number }> {
-    const data = await rpc<APICatalogResult>('get_catalog', params);
-    return {
-        ...data,
-        items: data.items.map(normalizeItem),
-    };
+  p_page?: number; p_per_page?: number; p_type?: 'movie' | 'series';
+  p_category?: string; p_search?: string; p_order_by?: 'rating' | 'new' | 'name';
+  p_is_adult?: boolean;
+}): Promise<CatalogResult> {
+  const page = Math.max(1, params.p_page ?? 1);
+  const perPage = Math.max(1, params.p_per_page ?? PAGE_SIZE);
+  let items: MediaItem[];
+  if (params.p_search?.trim()) items = await searchVod(params.p_search, params.p_type);
+  else if (params.p_category && categoryParts(params.p_category)) items = await loadCategoryInternal(params.p_category);
+  else items = await searchVod('', params.p_type);
+
+  if (params.p_order_by === 'name') items = [...items].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  else if (params.p_order_by === 'new') items = [...items].sort((a, b) => (b.tmdb?.year || '').localeCompare(a.tmdb?.year || ''));
+  const total = items.length;
+  return {
+    items: items.slice((page - 1) * perPage, page * perPage), total, page,
+    totalPages: Math.max(1, Math.ceil(total / perPage)),
+  };
 }
 
-/** get_item — detalhes completos de um título (url, sinopse, elenco, episódios) */
-export function invalidateItemCache(id: string): void {
-    ITEM_CACHE.delete(id);
-}
+export function invalidateItemCache(id: string): void { ITEM_CACHE.delete(id); }
 
 export async function getItemAPI(id: string): Promise<MediaItem> {
-    if (ITEM_CACHE.has(id)) {
-        // Move para o final do Map (LRU: mais recente = último)
-        const hit = ITEM_CACHE.get(id)!;
-        ITEM_CACHE.delete(id);
-        ITEM_CACHE.set(id, hit);
-        return hit;
-    }
-    const data = await rpc<APIFullItem>('get_item', { p_id: id });
-    const item = normalizeItem(data);
-    // Evicção LRU: remove o item mais antigo se estiver cheio
-    if (ITEM_CACHE.size >= ITEM_CACHE_MAX) {
-        const oldestKey = ITEM_CACHE.keys().next().value;
-        if (oldestKey) ITEM_CACHE.delete(oldestKey);
-    }
-    ITEM_CACHE.set(id, item);
-    return item;
+  const rootId = id.includes('|e|') ? id.split('|e|')[0] : id;
+  const parsed = parseVodId(rootId);
+  if (!parsed) throw new Error(`Item desconhecido: ${id}`);
+  const cached = ITEM_CACHE.get(rootId);
+  if (cached?.url && cached.tmdb?.poster && parsed.type === 'movie') return cached;
+  if (cached?.episodes && parsed.type === 'series') return cached;
+  const item = await getVodItem(rootId);
+  ITEM_CACHE.set(rootId, item);
+  return item;
 }
 
-/** get_categories — lista de categorias disponíveis com contagens */
 export async function getCategories(): Promise<APICategories> {
-    if (_categories) return _categories;
-    _categories = await rpc<APICategories>('get_categories');
-    return _categories;
+  const index = await loadVodIndex();
+  return {
+    movies: index.entries.map(e => ({ id: `filmes-${e.letter}`, label: `Filmes • ${e.letter}`, count: e.movies })),
+    series: index.entries.map(e => ({ id: `series-${e.letter}`, label: `Séries • ${e.letter}`, count: e.series })),
+  };
 }
 
-/** get_filmography — filmografia paginada de um ator. Retorna itens já normalizados */
-export async function getFilmography(params: {
-    p_actor_id?: number;
-    p_actor?: string;
-    p_page?: number;
-}): Promise<{ items: MediaItem[]; total: number; page: number; totalPages: number }> {
-    const data = await rpc<APICatalogResult>('get_filmography', params);
-    return {
-        ...data,
-        items: data.items.map(normalizeItem),
-    };
+export async function getFilmography(_params: { p_actor_id?: number; p_actor?: string; p_page?: number }): Promise<CatalogResult> {
+  return { items: [], total: 0, page: 1, totalPages: 1 };
 }
 
-// ============================================================
-// Funções de compatibilidade (usadas por mediaService / movies.tsx)
-// ============================================================
-
-/**
- * Carrega todos os previews da home e popula o HOME_CACHE.
- * Substitui loadAllPreviews do streamingService.
- * Retorna Map<categoryId, items>
- */
-export async function loadAllPreviews(): Promise<Map<string, MediaItem[]>> {
-    // Helper para injetar a categoria adulto
-    const ensureAdultCategory = async (resultMap: Map<string, MediaItem[]>) => {
-        if (!HOME_CACHE.has('adulto')) {
-            try {
-                const adultData = await getCatalog({ p_category: 'adulto', p_page: 1, p_is_adult: true });
-                if (adultData.items && adultData.items.length > 0) {
-                    const items = adultData.items.slice(0, 20);
-                    HOME_CACHE.set('adulto', items);
-                    resultMap.set('adulto', items);
-                    saveCatalogToDisk();
-                }
-            } catch (e) {
-                console.warn('[API] Falha ao carregar categoria adulto:', e);
-            }
-        }
-    };
-
-    // 1. Cache em memória (mais rápido)
-    if (HOME_CACHE.size > 0) {
-        const resultMap = new Map(HOME_CACHE);
-        await ensureAdultCategory(resultMap);
-        return resultMap;
-    }
-
-    // 2. Cache em disco (persiste entre sessões, TTL 12h)
-    if (loadCatalogFromDisk() && HOME_CACHE.size > 0) {
-        const resultMap = new Map(HOME_CACHE);
-        await ensureAdultCategory(resultMap);
-        return resultMap;
-    }
-
-    // 3. Busca na API Supabase
-    const apiCategories = await getHome({ p_limit: 20, p_order_by: 'rating' });
-    const result = new Map<string, MediaItem[]>();
-
-    for (const cat of apiCategories) {
-        const items = cat.items.map(normalizeItem);
-        HOME_CACHE.set(cat.id, items);
-        result.set(cat.id, items);
-    }
-
-    await ensureAdultCategory(result);
-
-    // Salva em disco para próxima sessão
-    saveCatalogToDisk();
-    return result;
+/** Carrega oito letras primeiro; as restantes entram em background. */
+export async function loadAllPreviews(limit = PREVIEW_SIZE): Promise<Map<string, MediaItem[]>> {
+  if (CATEGORY_CACHE.size) return getAllLoadedCategories(limit);
+  stopRequested = false;
+  const ids = (await allCategoryIds()).slice(0, 16);
+  await Promise.all(ids.map(async id => {
+    try { await loadCategoryInternal(id); }
+    catch (error) { console.warn('[SaimoVOD] Falha na categoria', id, error); }
+  }));
+  return getAllLoadedCategories(limit);
 }
 
-/**
- * Busca uma página de uma categoria via get_catalog.
- * Popula HOME_CACHE e CATALOG_CACHE.
- */
-export async function fetchCategoryPage(
-    categoryId: string,
-    page: number,
-): Promise<MediaItem[]> {
-    const cacheKey = `${categoryId}-p${page}`;
-    if (CATALOG_CACHE.has(cacheKey)) return CATALOG_CACHE.get(cacheKey)!;
-
-    try {
-        const data = await getCatalog({ p_category: categoryId, p_page: page, p_is_adult: true });
-        CATALOG_CACHE.set(cacheKey, data.items);
-
-        // Atualiza cache consolidado da categoria
-        const existing = HOME_CACHE.get(categoryId) || [];
-        HOME_CACHE.set(categoryId, deduplicateById([...existing, ...data.items]));
-
-        CAT_PAGES.set(categoryId, { totalPages: data.totalPages, lastPage: page });
-        return data.items;
-    } catch (e) {
-        console.warn(`[API] fetchCategoryPage falhou ${categoryId}-p${page}:`, e);
-        return [];
-    }
+export async function fetchCategoryPage(categoryId: string, page: number): Promise<MediaItem[]> {
+  const items = await loadCategoryInternal(categoryId);
+  return items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+}
+export function getCategoryItems(categoryId: string): MediaItem[] { return CATEGORY_CACHE.get(categoryId) ?? []; }
+export function categoryHasMore(categoryId: string): boolean { return (CATEGORY_CACHE.get(categoryId)?.length ?? 0) > PAGE_SIZE; }
+export async function loadNextPage(categoryId: string) {
+  return { items: await loadCategoryInternal(categoryId), hasMore: false };
 }
 
-/** Retorna todos os itens carregados de uma categoria */
-export function getCategoryItems(categoryId: string): MediaItem[] {
-    return HOME_CACHE.get(categoryId) || [];
-}
-
-/** Verifica se há mais páginas para uma categoria */
-export function categoryHasMore(categoryId: string): boolean {
-    const pages = CAT_PAGES.get(categoryId);
-    if (!pages) return true;
-    return pages.lastPage < pages.totalPages;
-}
-
-/** Carrega a próxima página de uma categoria */
-export async function loadNextPage(categoryId: string): Promise<{
-    items: MediaItem[];
-    hasMore: boolean;
-}> {
-    const pages = CAT_PAGES.get(categoryId);
-    if (pages && pages.lastPage >= pages.totalPages) {
-        return { items: HOME_CACHE.get(categoryId) || [], hasMore: false };
-    }
-    const nextPage = pages ? pages.lastPage + 1 : 2;
-    await fetchCategoryPage(categoryId, nextPage);
-    return {
-        items: HOME_CACHE.get(categoryId) || [],
-        hasMore: categoryHasMore(categoryId),
-    };
-}
-
-/** Busca nos itens carregados na home (cache em memória) */
 export function searchInLoadedData(query: string): MediaItem[] {
-    const normalized = query.toLowerCase().trim();
-    if (!normalized) return [];
-
-    const results: MediaItem[] = [];
-    const seen = new Set<string>();
-
-    HOME_CACHE.forEach(items => {
-        for (const item of items) {
-            if (seen.has(item.id)) continue;
-            const title = (item.tmdb?.title || item.name).toLowerCase();
-            if (title.includes(normalized)) {
-                results.push(item);
-                seen.add(item.id);
-            }
-        }
-    });
-    return results;
+  const wanted = query.trim().toLocaleLowerCase('pt-BR');
+  const seen = new Set<string>();
+  const result: MediaItem[] = [];
+  for (const items of CATEGORY_CACHE.values()) for (const item of items) {
+    if (seen.has(item.id) || (wanted && !item.name.toLocaleLowerCase('pt-BR').includes(wanted))) continue;
+    seen.add(item.id); result.push(item);
+  }
+  return result;
 }
-
-/** Snapshot de todas as categorias carregadas */
-export function getAllLoadedCategories(): Map<string, MediaItem[]> {
-    return new Map(HOME_CACHE);
+export function getAllLoadedCategories(limit?: number): Map<string, MediaItem[]> {
+  return new Map([...CATEGORY_CACHE.entries()].map(([id, items]) => [id, limit ? items.slice(0, limit) : items]));
 }
-
-/** Total de itens em memória */
 export function getTotalLoadedCount(): number {
-    let count = 0;
-    HOME_CACHE.forEach(items => { count += items.length; });
-    return count;
+  let total = 0; for (const items of CATEGORY_CACHE.values()) total += items.length; return total;
 }
-
-/** Limpa todos os caches em memória e em disco */
 export function clearAllCaches(): void {
-    HOME_CACHE.clear();
-    CATALOG_CACHE.clear();
-    CAT_PAGES.clear();
-    ITEM_CACHE.clear();
-    _categories = null;
-    _stopBackground = false;
-    clearCatalogDisk();
+  CATEGORY_CACHE.clear(); ITEM_CACHE.clear(); void clearSaimoSourceCache();
 }
+export async function stopLoading(): Promise<void> { stopRequested = true; }
 
-/** Sinaliza para parar o background loading */
-export async function stopLoading(): Promise<void> {
-    _stopBackground = true;
-}
-
-/**
- * Carrega uma página adicional de cada categoria em background.
- * Muito mais simples do que o streamingService (sem disco, sem múltiplas páginas).
- */
-export async function startBackgroundLoading(
-    onNewData?: () => void,
-): Promise<void> {
-    _stopBackground = false;
-    const categoryIds = Array.from(HOME_CACHE.keys());
-    let loaded = 0;
-    const BATCH_SIZE = 4; // notifica a UI a cada 4 categorias carregadas (reduz re-renders)
-
-    for (const categoryId of categoryIds) {
-        if (_stopBackground) break;
-        if (!categoryHasMore(categoryId)) continue;
-
-        try {
-            await fetchCategoryPage(categoryId, 2);
-            loaded++;
-            // Notifica em lotes em vez de após cada categoria
-            if (onNewData && loaded % BATCH_SIZE === 0) onNewData();
-            await new Promise(r => setTimeout(r, 150)); // 150ms entre categorias
-        } catch {
-            // Continua mesmo com erro em uma categoria
-        }
-    }
-
-    // Notificação final e salvamento em disco
-    if (loaded > 0 && !_stopBackground) {
-        if (onNewData) onNewData();
-        saveCatalogToDisk();
-    }
-}
-
-// ============================================================
-// Helpers internos
-// ============================================================
-
-function deduplicateById(items: MediaItem[]): MediaItem[] {
-    const seen = new Set<string>();
-    return items.filter(item => {
-        if (seen.has(item.id)) return false;
-        seen.add(item.id);
-        return true;
-    });
+export async function startBackgroundLoading(onProgress?: () => void): Promise<void> {
+  stopRequested = false;
+  const pending = (await allCategoryIds()).filter(id => !CATEGORY_CACHE.has(id));
+  for (let offset = 0; offset < pending.length && !stopRequested; offset += 4) {
+    await Promise.all(pending.slice(offset, offset + 4).map(async id => {
+      try { await loadCategoryInternal(id); }
+      catch (error) { console.warn('[SaimoVOD] Falha no background', id, error); }
+    }));
+    onProgress?.();
+  }
 }

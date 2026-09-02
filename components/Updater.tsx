@@ -15,25 +15,53 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Colors } from '../constants/Colors'; // Assuming Colors is present, else we can fall back
 
-const UPDATE_URL = "https://raw.githubusercontent.com/gabrielsaimo/Saimo-TV/refs/heads/main/update-cell.json";
+const RELEASE_URL = 'https://api.github.com/repos/gabrielsaimo/SaimoPlayer/releases/latest';
+
+interface UpdateInfo {
+  version: string;
+  url: string;
+  releaseNotes: string;
+  mandatory: boolean;
+}
 
 export default function Updater() {
   const [visible, setVisible] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState<any>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   
   const scaleValue = useRef(new Animated.Value(0.9)).current;
   const opacityValue = useRef(new Animated.Value(0)).current;
 
-  const currentVersion = Constants.expoConfig?.version || '1.1.4';
+  const currentVersion = Constants.expoConfig?.version || '1.4.0';
 
   const checkUpdate = useCallback(async () => {
     try {
-      const response = await fetch(UPDATE_URL, { cache: 'no-store' });
-      const data = await response.json();
+      const response = await fetch(RELEASE_URL, {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'SaimoCell-Updater',
+        },
+      });
+      if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
+      const release = await response.json();
+      const tag = String(release.tag_name || '');
+      const version = /^v?\d+\.\d+(?:\.\d+)?$/i.test(tag) ? tag.replace(/^v/i, '') : '';
+      // O mesmo release contém TV, macOS e celular. Nunca instalar SaimoTV.apk
+      // por engano: o contrato do móvel é um asset chamado SaimoCell*.apk.
+      const asset = Array.isArray(release.assets)
+        ? release.assets.find((item: any) => /^saimo[-_ ]?cell.*\.apk$/i.test(String(item.name || '')))
+        : null;
+      if (!version || !asset?.browser_download_url) return;
+      const data: UpdateInfo = {
+        version,
+        url: asset.browser_download_url,
+        releaseNotes: String(release.body || ''),
+        mandatory: false,
+      };
 
-      if (compareVersions(data.version, currentVersion) > 0) {
+      if (compareVersions(version, currentVersion) > 0) {
         setUpdateInfo(data);
         setVisible(true);
         Animated.parallel([
@@ -69,6 +97,7 @@ export default function Updater() {
   };
 
   const handleDownload = async () => {
+    if (!updateInfo) return;
     setIsDownloading(true);
     try {
       const apkUri = FileSystem.documentDirectory + 'update.apk';

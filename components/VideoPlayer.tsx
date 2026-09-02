@@ -25,6 +25,7 @@ import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
 import { getCurrentProgram, fetchChannelEPG, onEPGUpdate } from '../services/epgService';
 import EPGGuideModal from './EPGGuideModal';
+import { configureClearKey } from '../services/clearKeyServer';
 
 function toResLabel(h: number): string {
   if (h >= 2160) return '4K';
@@ -57,6 +58,16 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const insets = useSafeAreaInsets();
 
   const [activeChannel, setActiveChannel] = useState<Channel>(channel);
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const [clearKeyLicenseUrl, setClearKeyLicenseUrl] = useState<string | null>(null);
+
+  const activeStream = useMemo(() => {
+    return activeChannel.streams?.[sourceIndex] ?? {
+      url: activeChannel.url,
+      headers: activeChannel.headers,
+      drm: activeChannel.drm,
+    };
+  }, [activeChannel, sourceIndex]);
 
   const client = useRemoteMediaClient();
   const videoRef = useRef<VideoRef>(null);
@@ -122,6 +133,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     setSelectedTextIdx(null);
     setMenuPage('main');
     setIsLoading(true);
+    setSourceIndex(0);
     setActiveChannel(target);
     switchDebounceRef.current = setTimeout(() => {
       if (!isMountedRef.current) return;
@@ -144,7 +156,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     if (!client) return;
     client.loadMedia({
       mediaInfo: {
-        contentUrl: activeChannel.url,
+        contentUrl: activeStream.url,
         metadata: {
           type: 'movie',
           title: activeChannel.name,
@@ -154,7 +166,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
       autoplay: true,
     });
     setIsCasting(true);
-  }, [client, activeChannel]);
+  }, [client, activeChannel, activeStream.url]);
 
   useEffect(() => {
     if (client) handleCast();
@@ -248,6 +260,14 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const onError = useCallback(() => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
+    const streams = activeChannel.streams ?? [];
+    if (sourceIndex + 1 < streams.length) {
+      setSourceIndex(index => index + 1);
+      setHasError(false);
+      setIsLoading(true);
+      setVideoKey(key => key + 1);
+      return;
+    }
     if (!isRetryingRef.current) {
       isRetryingRef.current = true;
       setIsRetrying(true);
@@ -263,7 +283,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
       if (!isMountedRef.current || !isRetryingRef.current) return;
       setVideoKey(k => k + 1);
     }, 2000);
-  }, []);
+  }, [activeChannel.streams, sourceIndex]);
 
   const onAudioTracks = useCallback((data: any) => {
     setAudioTracks(data?.audioTracks ?? []);
@@ -297,13 +317,29 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   }, []);
 
   // ─── DRM config ───
+  useEffect(() => {
+    let active = true;
+    const key = activeStream.drm?.clearKey;
+    if (!key) {
+      setClearKeyLicenseUrl(null);
+      return () => { active = false; };
+    }
+    configureClearKey(key).then(url => {
+      if (active) {
+        setClearKeyLicenseUrl(url);
+        if (url) setVideoKey(value => value + 1);
+      }
+    });
+    return () => { active = false; };
+  }, [activeStream.drm?.clearKey]);
+
   const drmConfig = useMemo(() => {
-    if (!activeChannel.drm?.clearKey) return undefined;
+    if (!activeStream.drm?.clearKey || !clearKeyLicenseUrl) return undefined;
     return {
       type: DRMType.CLEARKEY,
-      licenseServer: 'http://127.0.0.1:8765',
+      licenseServer: clearKeyLicenseUrl,
     };
-  }, [activeChannel.drm?.clearKey]);
+  }, [activeStream.drm?.clearKey, clearKeyLicenseUrl]);
 
   // ─── Prev/Next ───
   // Sem channel store global; mantém apenas a interação via guia.
@@ -328,7 +364,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
           <Video
             key={videoKey}
             ref={videoRef}
-            source={{ uri: activeChannel.url, headers: activeChannel.headers }}
+            source={{ uri: activeStream.url, headers: activeStream.headers }}
             drm={drmConfig}
             style={styles.video}
             resizeMode="contain"

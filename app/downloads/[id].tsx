@@ -17,6 +17,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { downloadManager } from '../../services/downloadManager';
+import { openDownload } from '../../services/playDownload';
 import { formatBytes } from '../../services/downloadUtils';
 import type { DownloadItem } from '../../types';
 
@@ -115,14 +116,11 @@ export default function SeriesDownloadsDetailScreen() {
 
     const handlePlayEpisode = useCallback(
         (ep: DownloadItem) => {
-            router.push({
-                pathname: '/media-player/[id]' as any,
-                params: {
-                    id: ep.id,
-                    url: encodeURIComponent(ep.localPath),
-                    title: `${title} · ${ep.subtitle ?? ''}`,
-                    offline: '1',
-                },
+            openDownload(ep, router, {
+                id: ep.id,
+                url: encodeURIComponent(ep.localPath),
+                title: `${title} · ${ep.subtitle ?? ''}`,
+                offline: '1',
             });
         },
         [router, title]

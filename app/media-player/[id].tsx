@@ -6,7 +6,7 @@ import {
     StatusBar, BackHandler, Dimensions, ActivityIndicator,
     Platform, Animated, PanResponder, Modal,
 } from 'react-native';
-import Video, { VideoRef } from 'react-native-video';
+import Video, { SelectedTrackType, VideoRef } from 'react-native-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -371,6 +371,7 @@ export default function MediaPlayerScreen() {
         seriesId?: string; season?: string;
         nextId?: string; nextUrl?: string; nextTitle?: string;
         nextSeason?: string; nextEpisode?: string;
+        sources?: string; nextSources?: string;
         offline?: string;
     }>();
     const router = useRouter();
@@ -392,11 +393,19 @@ export default function MediaPlayerScreen() {
 
     const rawUrl = params.url || '';
     const decodedUrl = rawUrl ? decodeURIComponent(rawUrl) : '';
+    const sourceUrls = useMemo(() => {
+        let provided: string[] = [];
+        try {
+            provided = params.sources ? JSON.parse(decodeURIComponent(params.sources)) : [];
+        } catch { /* usa a URL principal */ }
+        return Array.from(new Set([decodedUrl, ...provided].filter(Boolean)));
+    }, [decodedUrl, params.sources]);
     const isOffline = params.offline === '1' || decodedUrl.startsWith('file://');
 
     // ── Episode state ──────────────────────────────────────────────────────
     const [currentTitle, setCurrentTitle] = useState(params.title || '');
     const [activeUrl, setActiveUrl] = useState(decodedUrl);
+    const sourceIndexRef = useRef(0);
     const [nextEpisode] = useState<{
         id: string; url: string; title: string; season: string; episode: string;
     } | null>(
@@ -503,6 +512,7 @@ export default function MediaPlayerScreen() {
     const osdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastTapRef = useRef<{ side: 'left' | 'right'; time: number } | null>(null);
     const nextCountdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const handleNextEpisodeRef = useRef<() => void>(() => {});
     const leftRippleAnim = useRef(new Animated.Value(0)).current;
     const rightRippleAnim = useRef(new Animated.Value(0)).current;
     const gestureStartRef = useRef({ x: 0, y: 0, volume: 1 });
@@ -598,14 +608,27 @@ export default function MediaPlayerScreen() {
     // ─────────────────────────────────────────────────────────────────────
 
     useEffect(() => {
-        if (!decodedUrl) { setHasError(true); setErrorMsg('URL inválida'); setIsLoading(false); return; }
-        if (isOffline) { setResolvedUrl(decodedUrl); return; }
+        if (!sourceUrls[0]) { setHasError(true); setErrorMsg('URL inválida'); setIsLoading(false); return; }
+        sourceIndexRef.current = 0;
+        setActiveUrl(sourceUrls[0]);
+        if (isOffline) { setResolvedUrl(sourceUrls[0]); return; }
         // Start with strategy 0 (VLC UA), no pre-fetch needed
-        setResolvedUrl(decodedUrl);
-    }, [decodedUrl, isOffline]);
+        setResolvedUrl(sourceUrls[0]);
+    }, [sourceUrls, isOffline]);
 
     const tryNextStrategy = useCallback(async () => {
         if (!isMountedRef.current) return;
+
+        // Arquivo local: trocar de cabeçalho HTTP não resolve nada, e ciclar
+        // pelas quatro estratégias só atrasava a mensagem de erro em três
+        // remontagens inúteis do player. O único gesto que ajuda de verdade é
+        // reabrir o mesmo arquivo do zero — é o que "Tentar novamente" já faz.
+        if (isOffline) {
+            setHasError(true);
+            setIsLoading(false);
+            setErrorMsg('O arquivo baixado está corrompido ou incompleto. Apague o download e baixe de novo.');
+            return;
+        }
 
         const next = strategyIdxRef.current + 1;
 
@@ -615,21 +638,35 @@ export default function MediaPlayerScreen() {
             setStrategyIdx(next);
             setIsLoading(true);
             setHasError(false);
-            const resolved = await resolveUrlViaGet(decodedUrl);
+            const resolved = await resolveUrlViaGet(activeUrl);
             if (!isMountedRef.current) return;
             setResolvedUrl(resolved);
             setVideoKey((k) => k + 1);
             return;
         }
 
-        // Strategy 3 or exhausted strategies: try fresh URL from API
+        // Esgotou os cabeçalhos desta fonte: avança para a próxima publicada.
+        if (next >= STRATEGIES.length && sourceIndexRef.current + 1 < sourceUrls.length && !isOffline) {
+            sourceIndexRef.current += 1;
+            const fallback = sourceUrls[sourceIndexRef.current];
+            setActiveUrl(fallback);
+            setResolvedUrl(fallback);
+            strategyIdxRef.current = 0;
+            setStrategyIdx(0);
+            setIsLoading(true);
+            setHasError(false);
+            setVideoKey(key => key + 1);
+            return;
+        }
+
+        // Sem reservas restantes: relê o arquivo remoto, que pode ter mudado.
         if (next >= STRATEGIES.length && !hasFetchedFreshUrl.current && params.id && !isOffline) {
             hasFetchedFreshUrl.current = true;
             setIsLoading(true);
             setHasError(false);
             try {
                 const media = await getItemAPI(params.id);
-                let freshUrl = decodedUrl;
+                let freshUrl = activeUrl;
                 if (params.seriesId && params.season) {
                     for (const season of Object.values(media.episodes ?? {})) {
                         const ep = season.find((e: any) => e.id === params.id);
@@ -665,7 +702,7 @@ export default function MediaPlayerScreen() {
         setIsLoading(true);
         setHasError(false);
         setVideoKey((k) => k + 1);
-    }, [decodedUrl, isOffline, params.id, params.seriesId, params.season]);
+    }, [activeUrl, sourceUrls, isOffline, params.id, params.seriesId, params.season]);
 
     // ─────────────────────────────────────────────────────────────────────
     // Cast
@@ -802,14 +839,14 @@ export default function MediaPlayerScreen() {
                 setNextCountdown((c) => {
                     if (c <= 1) {
                         clearInterval(nextCountdownRef.current!);
-                        handleNextEpisode();
+                        handleNextEpisodeRef.current();
                         return 0;
                     }
                     return c - 1;
                 });
             }, 1000);
         }
-    }, [resolvedNextEpisode, handleNextEpisode]);
+    }, [resolvedNextEpisode]);
 
     const onPictureInPictureStatusChanged = useCallback((data: { isActive: boolean }) => {
         setIsPiP(data.isActive);
@@ -889,6 +926,7 @@ export default function MediaPlayerScreen() {
         setResolvedUrl(next.url);
         setVideoKey((k) => k + 1);
     }, [resolvedNextEpisode, params.seriesId, params.season, setSeriesProgress]);
+    handleNextEpisodeRef.current = handleNextEpisode;
     const toggleAspectRatio = useCallback(() => {
         setResizeMode((prev) => {
             const idx = RESIZE_MODES.indexOf(prev);
@@ -1020,10 +1058,13 @@ export default function MediaPlayerScreen() {
     const sourceType = useMemo(() => detectSourceType(resolvedUrl ?? ''), [resolvedUrl]);
     const source = useMemo(() => {
         if (!resolvedUrl) return undefined;
-        const s: any = { uri: resolvedUrl, headers: STRATEGIES[strategyIdx]?.headers ?? {} };
+        // Cabeçalho HTTP não faz sentido para um arquivo local, e mandar um
+        // User-Agent junto de um `file://` é o tipo de coisa que varia de
+        // versão para versão do ExoPlayer sem aviso nenhum.
+        const s: any = { uri: resolvedUrl, headers: isOffline ? {} : (STRATEGIES[strategyIdx]?.headers ?? {}) };
         if (sourceType) s.type = sourceType;
         return s;
-    }, [resolvedUrl, strategyIdx, sourceType]);
+    }, [resolvedUrl, strategyIdx, sourceType, isOffline]);
 
     const retryManual = useCallback(() => {
         strategyIdxRef.current = 0;
@@ -1056,12 +1097,11 @@ export default function MediaPlayerScreen() {
                     paused={paused}
                     rate={rate}
                     volume={volume}
-                    selectedAudioTrack={selectedAudio !== null ? { type: 'index', value: selectedAudio } : undefined}
-                    selectedTextTrack={selectedText !== null ? { type: 'index', value: selectedText } : undefined}
+                    selectedAudioTrack={selectedAudio !== null ? { type: SelectedTrackType.INDEX, value: selectedAudio } : undefined}
+                    selectedTextTrack={selectedText !== null ? { type: SelectedTrackType.INDEX, value: selectedText } : undefined}
                     controls={false}
                     ignoreSilentSwitch="ignore"
                     playInBackground={true}
-                    pictureInPicture={isPiP}
                     enterPictureInPictureOnLeave={true}
                     onLoad={onLoad}
                     onProgress={onProgress}

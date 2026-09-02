@@ -29,10 +29,16 @@ function slug(s: string): string {
 }
 
 const mapped: Channel[] = raw.map((c) => {
+    const drm = c.drm_system && (c.drm_system.clearKey || c.drm_system.widevine)
+        ? { clearKey: c.drm_system.clearKey, widevine: c.drm_system.widevine }
+        : undefined;
     const streams: ChannelStream[] = (c.streams ?? []).map(s => ({
         url: s.url,
         quality: s.quality,
         headers: s.headers,
+        // DRM pertence à fonte. Sem isto, ao trocar para a reserva de canais
+        // como Telecine, o ExoPlayer recebia o MPD mas não a chave ClearKey.
+        drm,
     }));
     const primary = streams[0];
     return {
@@ -41,9 +47,7 @@ const mapped: Channel[] = raw.map((c) => {
         url: primary?.url ?? '',
         category: c.category,
         logo: c.logo || '',
-        drm: c.drm_system && (c.drm_system.clearKey || c.drm_system.widevine)
-            ? { clearKey: c.drm_system.clearKey, widevine: c.drm_system.widevine }
-            : undefined,
+        drm,
         headers: primary?.headers,
         streams,
     };
@@ -56,6 +60,13 @@ const allChannels: Channel[] = mapped.map((ch, index) => ({
     channelNumber: index + 1,
 }));
 
+let remoteChannels: Channel[] = [];
+
+/** Mantém consumidores legados (guia, favoritos e player) na lista remota atual. */
+export const setRemoteChannels = (next: Channel[]): void => {
+    remoteChannels = next;
+};
+
 // Registra canais no serviço de EPG (XMLTV match por nome)
 allChannels.forEach(c => registerChannel(c.id, c.name));
 
@@ -64,7 +75,10 @@ export const channels: Channel[] = allChannels.filter(ch => ch.category !== 'Adu
 export const adultChannels: Channel[] = allChannels.filter(ch => ch.category === 'Adulto');
 
 export const getAllChannels = (includeAdult: boolean): Channel[] => {
-    return includeAdult ? allChannels : channels;
+    const source = remoteChannels.length ? remoteChannels : allChannels;
+    return includeAdult
+        ? source
+        : source.filter(ch => ch.category.toLowerCase() !== 'adulto' && ch.category.toLowerCase() !== 'adultos');
 };
 
 export const getChannelsByCategory = (category: string, includeAdult: boolean): Channel[] => {
@@ -74,5 +88,5 @@ export const getChannelsByCategory = (category: string, includeAdult: boolean): 
 };
 
 export const getChannelById = (id: string): Channel | undefined => {
-    return allChannels.find(ch => ch.id === id);
+    return remoteChannels.find(ch => ch.id === id) ?? allChannels.find(ch => ch.id === id);
 };

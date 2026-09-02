@@ -501,8 +501,8 @@ export class FastDownload {
 
         // Create file if it doesn't exist (no-op if it already does)
         const info = await FileSystemLegacy.getInfoAsync(this.destPath);
+        const file = new File(this.destPath);
         if (!info.exists) {
-            const file = new File(this.destPath);
             try {
                 file.create();
             } catch {

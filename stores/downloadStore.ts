@@ -12,6 +12,7 @@ interface DownloadState {
     removeTask: (id: string) => void;
 
     addItem: (item: DownloadItem) => void;
+    updateItem: (id: string, patch: Partial<DownloadItem>) => void;
     removeItem: (id: string) => void;
 
     getItem: (id: string) => DownloadItem | undefined;
@@ -47,6 +48,13 @@ export const useDownloadStore = create<DownloadState>()(
 
             addItem: (item) =>
                 set((s) => ({ items: { ...s.items, [item.id]: item } })),
+
+            updateItem: (id, patch) =>
+                set((s) => {
+                    const existing = s.items[id];
+                    if (!existing) return s;
+                    return { items: { ...s.items, [id]: { ...existing, ...patch } } };
+                }),
 
             removeItem: (id) =>
                 set((s) => {

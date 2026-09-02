@@ -88,7 +88,12 @@ export default function MediaDetailScreen() {
     addToHistory(media.id);
     router.push({
       pathname: '/media-player/[id]' as any,
-      params: { id: media.id, url: encodeURIComponent(media.url), title: media.tmdb?.title || media.name }
+      params: {
+        id: media.id,
+        url: encodeURIComponent(media.url),
+        sources: encodeURIComponent(JSON.stringify((media.sources ?? []).map(source => source.url))),
+        title: media.tmdb?.title || media.name,
+      }
     });
   }, [media, router, addToHistory]);
 
@@ -201,7 +206,7 @@ export default function MediaDetailScreen() {
                     <Text style={styles.badgeText}>{tmdb.year}</Text>
                   </View>
                 )}
-                {tmdb?.runtime && (
+                {!!tmdb?.runtime && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>{tmdb.runtime} min</Text>
                   </View>
@@ -213,7 +218,7 @@ export default function MediaDetailScreen() {
                     </Text>
                   </View>
                 )}
-                {tmdb?.rating && (
+                {!!tmdb?.rating && (
                   <View style={[styles.badge, styles.ratingBadge]}>
                     <Ionicons name="star" size={12} color="#FFD700" />
                     <Text style={[styles.badgeText, { color: '#FFD700' }]}>

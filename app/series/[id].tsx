@@ -120,12 +120,14 @@ export default function SeriesDetailScreen() {
       params: {
         id: ep.id,
         url: encodeURIComponent(ep.url),
+        sources: encodeURIComponent(JSON.stringify((ep.sources ?? []).map(source => source.url))),
         title: `${series.name} - T${season} E${ep.episode}`,
         seriesId: series.id,
         season,
         ...(nextEp && {
           nextId: nextEp.id,
           nextUrl: encodeURIComponent(nextEp.url),
+          nextSources: encodeURIComponent(JSON.stringify((nextEp.sources ?? []).map(source => source.url))),
           nextTitle: `${series.name} - T${nextSeason} E${nextEp.episode}`,
           nextSeason,
           nextEpisode: String(nextEp.episode),
@@ -245,7 +247,7 @@ export default function SeriesDetailScreen() {
                     {series.totalSeasons} Temporada{series.totalSeasons > 1 ? 's' : ''}
                   </Text>
                 )}
-                {tmdb?.rating && (
+                {!!tmdb?.rating && (
                   <View style={styles.ratingBadge}>
                     <Ionicons name="star" size={12} color="#FFD700" />
                     <Text style={styles.ratingText}>{tmdb.rating.toFixed(1)}</Text>

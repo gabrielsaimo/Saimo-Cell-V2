@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState, useMemo } from 'react';
+import React, { memo, useCallback, useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { useRemoteMediaClient } from 'react-native-google-cast';
 import type { MediaItem } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useMediaStore } from '../stores/mediaStore';
+import { getCinemetaData } from '../services/saimoSources';
 
 interface MediaCardProps {
   item: MediaItem & { episodes?: any };
@@ -78,6 +79,21 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
     ? { width: cardWidth, height: Math.round(cardWidth * 1.5) }
     : SIZES[size];
   const tmdb = item.tmdb;
+  const [remotePoster, setRemotePoster] = useState(tmdb?.poster || '');
+
+  // O catálogo compartilhado não guarda imagens. Busca somente os cards que
+  // realmente chegaram à tela, como os apps macOS e Android TV fazem.
+  useEffect(() => {
+    let active = true;
+    if (tmdb?.poster) {
+      setRemotePoster(tmdb.poster);
+      return () => { active = false; };
+    }
+    getCinemetaData(item.name, hasSeries).then(meta => {
+      if (active && meta.poster) setRemotePoster(meta.poster);
+    });
+    return () => { active = false; };
+  }, [item.name, hasSeries, tmdb?.poster]);
 
   const handlePress = useCallback(() => {
     if (hasSeries) {
@@ -164,12 +180,12 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
     >
       {/* Poster */}
       <Image
-        source={{ uri: tmdb?.poster || '' }}
+        source={{ uri: remotePoster }}
         style={styles.poster}
         contentFit="cover"
         transition={0}
         cachePolicy="memory-disk"
-        recyclingKey={tmdb?.poster || item.url}
+        recyclingKey={remotePoster || item.id}
         priority={Platform.OS === 'android' ? 'high' : undefined}
       />
       

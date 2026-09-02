@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saimo-TV",
     "slug": "saimo-v2",
-    "version": "1.1.4",
+    "version": "1.4.0",
     "orientation": "default",
     "icon": "./assets/images/saimo_tv_logo.png",
     "scheme": "saimo",
@@ -38,6 +38,7 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.saimo.tv",
+      "versionCode": 10400,
       "permissions": [
         "INTERNET",
         "VIBRATE",
@@ -110,7 +111,8 @@
             "gradleVersion": "8.13",
             "enableProguardInReleaseBuilds": true,
             "minifyEnabled": true,
-            "shrinkResources": true
+            "shrinkResources": true,
+            "extraProguardRules": "-dontwarn com.tencent.mmkv.MMKV"
           },
           "ios": {
             "useFrameworks": "static",
@@ -126,7 +128,8 @@
           "savePhotosPermission": "Saimo TV salva seus downloads na Galeria para você assistir offline em outros apps.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,

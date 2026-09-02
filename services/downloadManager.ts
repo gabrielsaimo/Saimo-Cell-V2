@@ -57,7 +57,7 @@ class DownloadManager {
     private pausedByBackground = new Set<string>();
     private startingDownloads = new Set<string>();
     private appStateSubscription: { remove(): void } | null = null;
-    private appStateTimeout: NodeJS.Timeout | null = null;
+    private appStateTimeout: ReturnType<typeof setTimeout> | null = null;
 
     static getInstance(): DownloadManager {
         if (!DownloadManager._instance) {

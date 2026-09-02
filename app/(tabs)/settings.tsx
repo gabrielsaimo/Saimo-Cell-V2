@@ -17,7 +17,7 @@ import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Color
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
 import { clearEPGCache } from '../../services/epgService';
-import { clearAllCaches } from '../../services/streamingService';
+import { clearAllCaches } from '../../services/apiService';
 import PinModal from '../../components/PinModal';
 
 export default function SettingsScreen() {

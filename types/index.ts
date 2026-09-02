@@ -11,6 +11,7 @@ export interface ChannelStream {
     url: string;
     quality?: string;
     headers?: Record<string, string>;
+    drm?: ChannelDRM;
 }
 
 export interface Channel {
@@ -134,6 +135,12 @@ export interface Episode {
     url: string;
     id: string;
     logo?: string;
+    sources?: MediaSource[];
+}
+
+export interface MediaSource {
+    url: string;
+    label?: string;
 }
 
 export interface SeriesEpisodes {
@@ -153,6 +160,10 @@ export interface MediaItem {
     totalEpisodes?: number;
     tmdb?: TMDBData;
     episodes?: SeriesEpisodes;
+    /** Fontes em ordem de preferência; o player avança quando uma falha. */
+    sources?: MediaSource[];
+    /** Pedaço do catálogo remoto que contém os episódios da série. */
+    vodChunk?: number;
 }
 
 export interface MediaCategory {
