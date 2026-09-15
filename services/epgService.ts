@@ -1,10 +1,18 @@
 // EPG Service — Robust, instant cache load, auto-reload, guaranteed to work
 
-import type { Program, CurrentProgram } from '../types';
+import type { Channel, Program, CurrentProgram } from '../types';
 import { Paths, File as FSFile, Directory } from 'expo-file-system';
 
 const EPG_XML_URL = 'https://iptv-epg.org/files/epg-br.xml';
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+// Guia da própria Pluto TV, montado pelo i.mjh.nz. Casa pelo id da Pluto, que
+// já está no link do canal (jmp2.uk/plu-<id>) ou no logo: pelo nome, "Pluto TV
+// Novelas" pegaria a programação de outro canal. Direto no raw.githubusercontent
+// porque o redirecionamento do i.mjh.nz passa por uma página sem CORS.
+const PLUTO_URL = 'https://raw.githubusercontent.com/matthuisman/i.mjh.nz/master/PlutoTV/br.xml';
+const PLUTO_TTL_MS = 6 * 60 * 60 * 1000;
+const PLUTO_ID = /(?:plu-|images\.pluto\.tv\/channels\/)([0-9a-f]{24})/;
 
 // State
 let loadState: 'idle' | 'loading' | 'loaded' | 'error' = 'idle';
@@ -19,6 +27,11 @@ const resolvedIds = new Map<string, string | null>();
 
 // Registry
 const appChannelNames = new Map<string, string>();
+/** Canal do app -> id da Pluto, para quem é da Pluto. */
+const plutoIds = new Map<string, string>();
+/** Canais em que a Pluto é a fonte principal; nos outros ela é só reserva. */
+const plutoPrincipais = new Set<string>();
+let plutoXml: { at: number; xml: string } | null = null;
 let needsReload = true;
 let hasRegisteredChannels = false;
 let initCalled = false;
@@ -77,8 +90,31 @@ function notifyUpdate(): void {
 
 // ─── Channel Registration ─────────────────────────────────────────────────────
 
-export function registerChannel(appId: string, name: string): void {
+export interface PlutoDoCanal {
+    id: string;
+    /**
+     * A Pluto é a fonte principal (a primeira, ou está só no logo). Onde ela é
+     * reserva (TV Cultura, CNBC…) a grade dela é genérica e só entra na falta
+     * de outra.
+     */
+    principal: boolean;
+}
+
+/** id da Pluto do canal, pelo link de alguma fonte ou pelo logo. */
+export function plutoIdDe(channel: Pick<Channel, 'url' | 'logo' | 'streams'>): PlutoDoCanal | undefined {
+    const links = channel.streams?.length ? channel.streams.map(s => s.url) : [channel.url];
+    const doLink = links.map(l => PLUTO_ID.exec(l ?? '')?.[1]).find(Boolean);
+    const id = doLink ?? PLUTO_ID.exec(channel.logo ?? '')?.[1];
+    if (!id) return undefined;
+    return { id, principal: !doLink || PLUTO_ID.test(links[0] ?? '') };
+}
+
+export function registerChannel(appId: string, name: string, pluto?: PlutoDoCanal): void {
     appChannelNames.set(appId, name);
+    if (pluto) plutoIds.set(appId, pluto.id);
+    else plutoIds.delete(appId);
+    if (pluto?.principal) plutoPrincipais.add(appId);
+    else plutoPrincipais.delete(appId);
     resolvedIds.delete(appId);
     needsReload = true;
     hasRegisteredChannels = true;
@@ -212,6 +248,9 @@ async function extractChannels(xml: string): Promise<void> {
 function matchChannels(): Set<string> {
     const matched = new Set<string>();
     for (const [appId, appName] of appChannelNames) {
+        // Canal da Pluto fica com o guia da Pluto (fillPluto), nunca com um
+        // canal do feed que só se parece no nome.
+        if (plutoPrincipais.has(appId)) { resolvedIds.set(appId, null); continue; }
         const n = norm(appName);
         let xmlId = nameIndex.get(n) ?? null;
 
@@ -228,8 +267,8 @@ function matchChannels(): Set<string> {
     return matched;
 }
 
-async function extractProgrammes(xml: string, targetIds: Set<string>): Promise<void> {
-    channelPrograms.clear();
+async function extractProgrammes(xml: string, targetIds: Set<string>, pluto = false): Promise<void> {
+    if (!pluto) channelPrograms.clear();
     if (targetIds.size === 0) {
         console.log('[EPG] No target channels to extract programmes');
         return;
@@ -278,6 +317,7 @@ async function extractProgrammes(xml: string, targetIds: Set<string>): Promise<v
                             if (title) {
                                 const dM = inner.match(/<desc[^>]*>([\s\S]*?)<\/desc>/);
                                 const cM = inner.match(/<category[^>]*>([^<]+)<\/category>/);
+                                const iM = inner.match(/<icon[^>]*src="([^"]+)"/);
                                 channelPrograms.get(channelId)?.push({
                                     id: `${channelId}-${startTime.getTime()}`,
                                     title,
@@ -285,6 +325,7 @@ async function extractProgrammes(xml: string, targetIds: Set<string>): Promise<v
                                     category: cM ? dec(cM[1]).trim() : '',
                                     startTime,
                                     endTime,
+                                    ...(iM ? { thumbnail: dec(iM[1]) } : {}),
                                 });
                                 kept++;
                             }
@@ -299,6 +340,7 @@ async function extractProgrammes(xml: string, targetIds: Set<string>): Promise<v
 
         if (++batch >= 4000) {
             batch = 0;
+            if (pluto) { await yieldNow(); continue; }
             const pct = 50 + Math.floor((cursor / xmlLen) * 49);
             notifyProgress(Math.min(99, pct), channelPrograms.size, targetIds.size);
             await yieldNow();
@@ -395,6 +437,36 @@ async function fillGuiaDeTvGaps(): Promise<void> {
     }
 }
 
+/**
+ * Guia da Pluto para os canais da Pluto. O documento fica na memória por seis
+ * horas: registrar um canal recarrega o guia, e baixar de novo a cada recarga
+ * seria desperdício.
+ */
+async function fillPluto(): Promise<void> {
+    if (plutoIds.size === 0) return;
+    try {
+        if (!plutoXml || Date.now() - plutoXml.at > PLUTO_TTL_MS) {
+            const res = await fetch(PLUTO_URL, { cache: 'no-cache' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            plutoXml = { at: Date.now(), xml: await res.text() };
+        }
+        const ids = new Set(plutoIds.values());
+        await extractProgrammes(plutoXml.xml, ids, true);
+        let preenchidos = 0;
+        for (const [appId, id] of plutoIds) {
+            if (!channelPrograms.get(id)?.length) continue;
+            const atual = resolvedIds.get(appId);
+            if (!plutoPrincipais.has(appId) && atual && channelPrograms.get(atual)?.length) continue;
+            resolvedIds.set(appId, id);
+            preenchidos++;
+        }
+        console.log(`[EPG] Pluto: ${preenchidos} de ${plutoIds.size} canais`);
+        if (preenchidos) notifyUpdate();
+    } catch (e) {
+        console.log('[EPG] Pluto falhou:', e);
+    }
+}
+
 // ─── Load ─────────────────────────────────────────────────────────────────────
 
 async function doLoadSync(xml: string): Promise<void> {
@@ -422,6 +494,7 @@ async function doLoadSync(xml: string): Promise<void> {
         console.log(`[EPG] Load complete - ${channelPrograms.size} channels`);
         notifyUpdate();
         void fillGuiaDeTvGaps();
+        void fillPluto();
 
         // If channels registered during loading, reload to pick them up
         if (appChannelNames.size > channelsAtStart || needsReload) {
@@ -511,6 +584,7 @@ async function doLoadSilent(xml: string): Promise<void> {
         const matched = matchChannels();
         await extractProgrammes(xml, matched);
         notifyUpdate();
+        await fillPluto();
         console.log('[EPG] Silent refresh complete');
     } catch (e) {
         console.error('[EPG] Silent refresh failed:', e);
