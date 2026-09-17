@@ -7,7 +7,8 @@ import {
   Animated, 
   Platform, 
   TouchableOpacity,
-  ActivityIndicator
+  ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
@@ -16,6 +17,18 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { Colors } from '../constants/Colors'; // Assuming Colors is present, else we can fall back
 
 const RELEASE_URL = 'https://api.github.com/repos/gabrielsaimo/SaimoPlayer/releases/latest';
+
+/** As notas vêm em Markdown do GitHub; aqui viram texto simples. */
+function textoDasNotas(md: string): string {
+  return md
+    .replace(/\r/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 interface UpdateInfo {
   version: string;
@@ -29,6 +42,7 @@ export default function Updater() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
   
   const scaleValue = useRef(new Animated.Value(0.9)).current;
   const opacityValue = useRef(new Animated.Value(0)).current;
@@ -49,15 +63,16 @@ export default function Updater() {
       const tag = String(release.tag_name || '');
       const version = /^v?\d+\.\d+(?:\.\d+)?$/i.test(tag) ? tag.replace(/^v/i, '') : '';
       // O mesmo release contém TV, macOS e celular. Nunca instalar SaimoTV.apk
-      // por engano: o contrato do móvel é um asset chamado SaimoCell*.apk.
+      // por engano: aceitamos somente os nomes explícitos do app móvel.
       const asset = Array.isArray(release.assets)
-        ? release.assets.find((item: any) => /^saimo[-_ ]?cell.*\.apk$/i.test(String(item.name || '')))
+        ? release.assets.find((item: any) =>
+            /^(?:saimo[-_ ]?cell|saimotv[-_ ]cell).*\.apk$/i.test(String(item.name || '')))
         : null;
       if (!version || !asset?.browser_download_url) return;
       const data: UpdateInfo = {
         version,
         url: asset.browser_download_url,
-        releaseNotes: String(release.body || ''),
+        releaseNotes: textoDasNotas(String(release.body || '')),
         mandatory: false,
       };
 
@@ -99,19 +114,27 @@ export default function Updater() {
   const handleDownload = async () => {
     if (!updateInfo) return;
     setIsDownloading(true);
+    setErro(null);
+    setDownloadProgress(0);
     try {
       const apkUri = FileSystem.documentDirectory + 'update.apk';
       const downloadResumable = FileSystem.createDownloadResumable(
         updateInfo.url,
         apkUri,
         {},
-        (dp) => setDownloadProgress(dp.totalBytesWritten / dp.totalBytesExpectedToWrite)
+        (dp) => {
+          if (dp.totalBytesExpectedToWrite > 0) {
+            setDownloadProgress(Math.min(1, dp.totalBytesWritten / dp.totalBytesExpectedToWrite));
+          }
+        }
       );
 
       const result = await downloadResumable.downloadAsync();
-      if (result) installApk(result.uri);
+      if (!result || result.status >= 400) throw new Error(`HTTP ${result?.status ?? '?'}`);
+      await installApk(result.uri);
     } catch (e) {
       setIsDownloading(false);
+      setErro('Não foi possível baixar ou abrir o instalador. Verifique a internet e tente de novo.');
     }
   };
 
@@ -156,9 +179,14 @@ export default function Updater() {
             Versão {updateInfo?.version} já está disponível (Atual: {currentVersion})
           </Text>
           
-          <Text style={styles.description}>
-            {updateInfo?.releaseNotes || "Melhorias de desempenho e correções de bugs."}
-          </Text>
+          {/* Notas longas rolam aqui dentro: os botões ficam sempre à vista. */}
+          <ScrollView style={styles.notes} contentContainerStyle={styles.notesContent}>
+            <Text style={styles.description}>
+              {updateInfo?.releaseNotes || "Melhorias de desempenho e correções de bugs."}
+            </Text>
+          </ScrollView>
+
+          {erro && <Text style={styles.errorText}>{erro}</Text>}
 
           {isDownloading ? (
             <View style={styles.progressContainer}>
@@ -209,6 +237,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: '100%',
     maxWidth: 400,
+    maxHeight: '90%',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255, 215, 0, 0.2)',
@@ -235,12 +264,27 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
   },
+  notes: {
+    width: '100%',
+    flexGrow: 0,
+    flexShrink: 1,
+    maxHeight: 260,
+    marginBottom: 20,
+  },
+  notesContent: {
+    paddingHorizontal: 2,
+  },
   description: {
     fontSize: 15,
     color: 'rgba(255, 255, 255, 0.8)',
-    textAlign: 'center',
-    marginBottom: 24,
+    textAlign: 'left',
     lineHeight: 22,
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 13,
+    textAlign: 'center',
+    marginBottom: 12,
   },
   progressContainer: {
     width: '100%',
