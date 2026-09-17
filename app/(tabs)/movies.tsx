@@ -32,6 +32,7 @@ import type { MediaItem } from '../../types';
 import MediaRow from '../../components/MediaRow';
 import MediaCard from '../../components/MediaCard';
 import FilterBar from '../../components/FilterBar';
+import * as telemetria from '../../services/telemetria';
 import { getAllGenres, filterMedia, sortMedia } from '../../services/mediaService';
 
 const ADULT_CATEGORY_IDS = [
@@ -185,6 +186,10 @@ export default function MoviesScreen() {
       if (!adultUnlocked) items = items.filter(item => !isAdultContent(item));
       items = deduplicateByName(items);
       if (items.length > MAX_GRID_RESULTS) items = items.slice(0, MAX_GRID_RESULTS);
+      // Busca sem filtro que não achou nada: o monitor mostra o que falta.
+      if (page === 1 && !items.length && params.p_search && !params.p_type && !params.p_category) {
+        telemetria.buscou('vod', params.p_search, () => false);
+      }
       if (mountedRef.current) {
         if (page === 1) setCatalogResults(items);
         else setCatalogResults(prev => deduplicateByName([...prev, ...items]));
