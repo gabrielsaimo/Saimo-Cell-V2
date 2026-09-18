@@ -1,5 +1,6 @@
 import { AppState, type AppStateStatus } from 'react-native';
 import { useDownloadStore } from '../stores/downloadStore';
+import { isKnownDownloadFolder } from './downloadRouting';
 import { getItemAPI, invalidateItemCache } from './apiService';
 import type { MediaItem, Episode, DownloadItem, DownloadTask } from '../types';
 import {
@@ -75,6 +76,20 @@ class DownloadManager {
     private async _doInit(): Promise<void> {
         if (this.initialized) return;
         this.initialized = true;
+
+        // Never reconcile or delete files before persisted downloads are loaded.
+        if (!useDownloadStore.persist.hasHydrated()) {
+            await new Promise<void>(resolve => {
+                const unsubscribe = useDownloadStore.persist.onFinishHydration(() => {
+                    unsubscribe();
+                    resolve();
+                });
+                if (useDownloadStore.persist.hasHydrated()) {
+                    unsubscribe();
+                    resolve();
+                }
+            });
+        }
 
         // Notifications must be ready before any download starts
         await initNotifications();
@@ -833,16 +848,15 @@ class DownloadManager {
     private async _cleanupOrphans(): Promise<void> {
         try {
             const base = (FileSystemLegacy.documentDirectory ?? '') + 'saimo_downloads/';
-            const store = useDownloadStore.getState();
-
-            // Collect all known media IDs from tasks + items
-            const knownMediaIds = new Set<string>();
-            for (const task of Object.values(store.tasks)) {
-                knownMediaIds.add(task.mediaId);
-            }
-            for (const item of Object.values(store.items)) {
-                knownMediaIds.add(item.mediaId);
-            }
+            if (!useDownloadStore.persist.hasHydrated()) return;
+            const isKnownFolder = (folder: string) => {
+                // Re-read before each deletion: a download may have been added
+                // while directory enumeration was awaiting the native filesystem.
+                const store = useDownloadStore.getState();
+                const ids = [...Object.values(store.tasks), ...Object.values(store.items)]
+                    .flatMap(item => [item.mediaId, item.seriesId ?? item.mediaId]);
+                return isKnownDownloadFolder(folder, ids);
+            };
 
             let cleaned = 0;
 
@@ -851,8 +865,8 @@ class DownloadManager {
                 const moviesDir = base + 'movies/';
                 const movieFolders = await FileSystemLegacy.readDirectoryAsync(moviesDir);
                 for (const folder of movieFolders) {
-                    if (!knownMediaIds.has(folder)) {
-                        await deleteDirAtPath(moviesDir + folder + '/');
+                    if (!isKnownFolder(folder)) {
+                        await deleteDirAtPath(moviesDir + encodeURIComponent(folder) + '/');
                         cleaned++;
                     }
                 }
@@ -865,8 +879,8 @@ class DownloadManager {
                 const seriesDir = base + 'series/';
                 const seriesFolders = await FileSystemLegacy.readDirectoryAsync(seriesDir);
                 for (const folder of seriesFolders) {
-                    if (!knownMediaIds.has(folder)) {
-                        await deleteDirAtPath(seriesDir + folder + '/');
+                    if (!isKnownFolder(folder)) {
+                        await deleteDirAtPath(seriesDir + encodeURIComponent(folder) + '/');
                         cleaned++;
                     }
                 }

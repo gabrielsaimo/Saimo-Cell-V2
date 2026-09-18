@@ -1,11 +1,15 @@
 # Changelog — Saimo TV
 
-## [1.4.0] — 2026-09-01
+## [1.4.0] — 2026-09-02
 
+- Corrigida a tela preta na lista de episódios baixados: IDs codificados são reconhecidos após a navegação, com estados visíveis de carregamento e lista vazia.
+- Limpeza de downloads aguarda a leitura dos registros salvos e preserva pastas com nomes decodificados, evitando apagar episódios válidos ao reiniciar o app.
+- Player offline preserva os IDs do histórico e atualiza a navegação ao passar para outro episódio baixado.
 - Corrigida a tela preta ao abrir um download concluído: o app agora confere o arquivo no disco antes de abrir o player e avisa quando ele foi apagado ou ficou incompleto, em vez de mostrar um retângulo preto sem explicação. Também parou de ciclar cabeçalhos HTTP inúteis num arquivo local.
-- Canais passam a acompanhar automaticamente `catalogo.txt` e `canais.txt` do SaimoPlayer, com fontes reserva, headers por stream e ClearKey compatível com Android.
+- Canais passam a usar uma única lista, atualizada automaticamente por `catalogo.txt` e `canais.txt` do SaimoPlayer, sem a antiga escolha Lite/Pro.
+- Fontes da lista Git recebem headers por stream, ClearKey compatível, DNS-over-HTTPS e adaptação dos hosts especiais do Telecine no Android.
 - Filmes e séries passam a usar o catálogo VOD fragmentado compartilhado pelo SaimoPlayer/SaimoTV-Android, com busca, metadados, episódios e troca automática de fonte.
-- Atualizador migrado para os releases do SaimoPlayer; o APK móvel deve ser publicado como `SaimoCell.apk` ou `SaimoCell-*.apk`.
+- Atualizador migrado para os releases do SaimoPlayer; reconhece com segurança `SaimoTV-Cell.apk` e `SaimoCell*.apk` sem confundir com o APK da TV.
 - Cache remoto com fallback offline, carregamento progressivo do catálogo e correções de compatibilidade com Expo SDK 54/Android.
 
 ## [1.0.4] — 2026-04-24

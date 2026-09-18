@@ -1,6 +1,5 @@
 import type { Channel, ChannelStream } from '../types';
 import offlineData from '../offiline.json';
-import { registerChannel } from '../services/epgService';
 
 interface RawStream {
     url: string;
@@ -67,18 +66,14 @@ export const setRemoteChannels = (next: Channel[]): void => {
     remoteChannels = next;
 };
 
-// Registra canais no serviço de EPG (XMLTV match por nome)
-allChannels.forEach(c => registerChannel(c.id, c.name));
-
 // offiline.json não contém categoria 'Adulto'; mantida API por compatibilidade
 export const channels: Channel[] = allChannels.filter(ch => ch.category !== 'Adulto');
 export const adultChannels: Channel[] = allChannels.filter(ch => ch.category === 'Adulto');
 
 export const getAllChannels = (includeAdult: boolean): Channel[] => {
-    const source = remoteChannels.length ? remoteChannels : allChannels;
     return includeAdult
-        ? source
-        : source.filter(ch => ch.category.toLowerCase() !== 'adulto' && ch.category.toLowerCase() !== 'adultos');
+        ? remoteChannels
+        : remoteChannels.filter(ch => ch.category.toLowerCase() !== 'adulto' && ch.category.toLowerCase() !== 'adultos');
 };
 
 export const getChannelsByCategory = (category: string, includeAdult: boolean): Channel[] => {
@@ -88,5 +83,5 @@ export const getChannelsByCategory = (category: string, includeAdult: boolean): 
 };
 
 export const getChannelById = (id: string): Channel | undefined => {
-    return remoteChannels.find(ch => ch.id === id) ?? allChannels.find(ch => ch.id === id);
+    return remoteChannels.find(ch => ch.id === id);
 };

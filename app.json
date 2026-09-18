@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saimo-TV",
     "slug": "saimo-v2",
-    "version": "1.4.0",
+    "version": "1.6.1",
     "orientation": "default",
     "icon": "./assets/images/saimo_tv_logo.png",
     "scheme": "saimo",
@@ -38,7 +38,7 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.saimo.tv",
-      "versionCode": 10400,
+      "versionCode": 10601,
       "permissions": [
         "INTERNET",
         "VIBRATE",
@@ -66,6 +66,7 @@
         }
       ],
       "./plugins/withCleartextTraffic",
+      "./plugins/withAndroidDoH",
       [
         "expo-video",
         {

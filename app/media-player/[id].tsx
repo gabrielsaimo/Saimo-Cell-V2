@@ -18,11 +18,14 @@ import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 import { Colors, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
 import { useDownloadStore } from '../../stores/downloadStore';
+import { resolveDownloadId } from '../../services/downloadRouting';
+import { openDownload } from '../../services/playDownload';
 import {
     STRATEGIES, resolveUrlViaGet, detectSourceType,
 } from '../../services/playerStrategies';
 import { getItemAPI } from '../../services/apiService';
 import * as Brightness from 'expo-brightness';
+import * as telemetria from '../../services/telemetria';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -366,7 +369,7 @@ function NextEpisodeCard({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function MediaPlayerScreen() {
-    const params = useLocalSearchParams<{
+    const routeParams = useLocalSearchParams<{
         id: string; url: string; title: string;
         seriesId?: string; season?: string;
         nextId?: string; nextUrl?: string; nextTitle?: string;
@@ -380,6 +383,17 @@ export default function MediaPlayerScreen() {
     const client = useRemoteMediaClient();
     const tasks = useDownloadStore((s) => s.tasks);
     const items = useDownloadStore((s) => s.items);
+    const offlineItem = useMemo(() => {
+        if (routeParams.offline !== '1') return undefined;
+        const id = resolveDownloadId(routeParams.id, Object.keys(items));
+        return id ? items[id] : undefined;
+    }, [routeParams.id, routeParams.offline, items]);
+    const params = {
+        ...routeParams,
+        id: offlineItem?.id ?? routeParams.id,
+        seriesId: offlineItem ? (offlineItem.seriesId ?? (offlineItem.itemType === 'episode' ? offlineItem.mediaId : undefined)) : routeParams.seriesId,
+        season: offlineItem?.seasonNumber !== undefined ? String(offlineItem.seasonNumber) : routeParams.season,
+    };
 
     // Resolve remote URL for Cast even when playing an offline file
     const castUrl = useMemo(() => {
@@ -437,9 +451,9 @@ export default function MediaPlayerScreen() {
         const sId = params.seriesId || currentItem?.seriesId;
 
         if (sId) {
-            const episodes = Object.values(items).filter(i => i.seriesId === sId && i.itemType === 'episode');
-            const sNum = currentItem?.seasonNumber || (params.season ? parseInt(params.season) : null);
-            const eNum = currentItem?.episodeNumber || (params.nextEpisode ? parseInt(params.nextEpisode) - 1 : null);
+            const episodes = Object.values(items).filter(i => (i.seriesId ?? i.mediaId) === sId && i.itemType === 'episode');
+            const sNum = currentItem?.seasonNumber ?? (params.season ? parseInt(params.season) : null);
+            const eNum = currentItem?.episodeNumber ?? (params.nextEpisode ? parseInt(params.nextEpisode) - 1 : null);
 
             if (sNum !== null && eNum !== null) {
                 // Try next episode same season
@@ -530,7 +544,7 @@ export default function MediaPlayerScreen() {
             // If it's a series, also update series-level progress
             if (params.seriesId && params.season) {
                 // We try to estimate current episode from title or params if not explicit
-                const epNum = params.nextEpisode ? parseInt(params.nextEpisode) - 1 : 0;
+                const epNum = offlineItem?.episodeNumber ?? (params.nextEpisode ? parseInt(params.nextEpisode) - 1 : 0);
                 setSeriesProgress(
                     params.seriesId,
                     parseInt(params.season),
@@ -543,7 +557,7 @@ export default function MediaPlayerScreen() {
         }, 5000);
 
         return () => clearInterval(interval);
-    }, [params.id, params.seriesId, params.season, params.nextEpisode, currentTime, duration, paused, addToHistory, setSeriesProgress]);
+    }, [params.id, params.seriesId, params.season, params.nextEpisode, offlineItem?.episodeNumber, currentTime, duration, paused, addToHistory, setSeriesProgress]);
 
     // ─────────────────────────────────────────────────────────────────────
     // Fullscreen / lifecycle
@@ -647,6 +661,8 @@ export default function MediaPlayerScreen() {
 
         // Esgotou os cabeçalhos desta fonte: avança para a próxima publicada.
         if (next >= STRATEGIES.length && sourceIndexRef.current + 1 < sourceUrls.length && !isOffline) {
+            const m = monitorRef.current;
+            if (m) telemetria.falhou('vod', m.titulo, m.url, sourceIndexRef.current + 1, 'nenhum cabeçalho abriu');
             sourceIndexRef.current += 1;
             const fallback = sourceUrls[sourceIndexRef.current];
             setActiveUrl(fallback);
@@ -764,6 +780,11 @@ export default function MediaPlayerScreen() {
         if (!isMountedRef.current) return;
         setIsLoading(false);
         setHasError(false);
+        const m = monitorRef.current;
+        if (m && !m.avisado && !isOffline) {
+            m.avisado = true;
+            telemetria.tocou('vod', m.titulo, m.url, sourceIndexRef.current + 1, Date.now() - m.desde);
+        }
         const d = data?.duration;
         if (d && isFinite(d) && d > 0) setDuration(d);
         const h = data?.naturalSize?.height;
@@ -824,6 +845,31 @@ export default function MediaPlayerScreen() {
         tryNextStrategy();
     }, [tryNextStrategy]);
 
+    // ─── Monitor ───
+    const monitorRef = useRef<{ titulo: string; url: string; desde: number; avisado: boolean } | null>(null);
+    useEffect(() => {
+        if (!currentTitle || !activeUrl) return;
+        const nova = monitorRef.current?.titulo !== currentTitle;
+        monitorRef.current = { titulo: currentTitle, url: activeUrl, desde: Date.now(), avisado: false };
+        telemetria.comecou('vod', currentTitle, activeUrl, sourceIndexRef.current + 1, nova);
+    }, [currentTitle, activeUrl]);
+    useEffect(() => {
+        const m = monitorRef.current;
+        if (!hasError || !m || isOffline) return;
+        telemetria.falhou('vod', m.titulo, m.url, sourceIndexRef.current + 1, errorMsg || 'não abriu');
+        telemetria.caiu('vod', m.titulo, sourceUrls.length);
+    }, [hasError]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => () => telemetria.parou(), []);
+    // O monitor só conta o tempo com o filme andando: pausado não é assistir.
+    useEffect(() => {
+        telemetria.video({
+            rodando: !!monitorRef.current?.avisado,
+            pausado: paused,
+            carregando: isLoading,
+            qualidade: resolution,
+        });
+    }, [paused, isLoading, resolution]);
+
     const onBuffer = useCallback(({ isBuffering }: { isBuffering: boolean }) => {
         if (!isMountedRef.current) return;
         setIsLoading(isBuffering);
@@ -869,12 +915,12 @@ export default function MediaPlayerScreen() {
         if (params.id) {
             addToHistory(params.id, currentTime, duration);
             if (params.seriesId && params.season) {
-                const epNum = params.nextEpisode ? parseInt(params.nextEpisode) - 1 : 0;
+                const epNum = offlineItem?.episodeNumber ?? (params.nextEpisode ? parseInt(params.nextEpisode) - 1 : 0);
                 setSeriesProgress(params.seriesId, parseInt(params.season), epNum, params.id, currentTime, duration);
             }
         }
         router.back();
-    }, [params.id, params.seriesId, params.season, params.nextEpisode, currentTime, duration, router, addToHistory, setSeriesProgress]);
+    }, [params.id, params.seriesId, params.season, params.nextEpisode, offlineItem?.episodeNumber, currentTime, duration, router, addToHistory, setSeriesProgress]);
 
     const togglePause = useCallback(() => {
         setPaused((p) => !p);
@@ -882,6 +928,7 @@ export default function MediaPlayerScreen() {
     }, [paused, revealOSD]);
 
     const seek = useCallback((t: number) => {
+        telemetria.pulou();
         videoRef.current?.seek(Math.max(0, t));
     }, []);
 
@@ -903,6 +950,21 @@ export default function MediaPlayerScreen() {
     const handleNextEpisode = useCallback(() => {
         const next = resolvedNextEpisode;
         if (!next) return;
+        if (isOffline) {
+            const downloaded = items[next.id];
+            if (!downloaded) return;
+            if (nextCountdownRef.current) clearInterval(nextCountdownRef.current);
+            setShowNextCard(false);
+            // A new route also updates the episode ID used for progress and the
+            // following episode; changing only the video URL kept the old ID.
+            void openDownload(downloaded, router, {
+                id: downloaded.id,
+                url: encodeURIComponent(downloaded.localPath),
+                title: `${downloaded.title} · ${downloaded.subtitle ?? ''}`,
+                offline: '1',
+            }, 'replace');
+            return;
+        }
         if (nextCountdownRef.current) clearInterval(nextCountdownRef.current);
         setShowNextCard(false);
         if (params.seriesId && params.season) {
@@ -925,7 +987,7 @@ export default function MediaPlayerScreen() {
         setActiveUrl(next.url);
         setResolvedUrl(next.url);
         setVideoKey((k) => k + 1);
-    }, [resolvedNextEpisode, params.seriesId, params.season, setSeriesProgress]);
+    }, [resolvedNextEpisode, params.seriesId, params.season, setSeriesProgress, isOffline, items, router]);
     handleNextEpisodeRef.current = handleNextEpisode;
     const toggleAspectRatio = useCallback(() => {
         setResizeMode((prev) => {

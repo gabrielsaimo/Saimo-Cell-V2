@@ -23,6 +23,7 @@ export async function openDownload(
   item: DownloadItem,
   router: Router,
   params: Record<string, string>,
+  navigation: 'push' | 'replace' = 'push',
 ): Promise<void> {
   let ok = false;
   try {
@@ -34,7 +35,7 @@ export async function openDownload(
   }
 
   if (ok) {
-    router.push({ pathname: '/media-player/[id]' as any, params });
+    router[navigation]({ pathname: '/media-player/[id]' as any, params });
     return;
   }
 

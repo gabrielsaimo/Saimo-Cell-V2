@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import { useMediaStore } from '../../stores/mediaStore';
 import {
     View,
@@ -8,6 +8,7 @@ import {
     TouchableOpacity,
     StatusBar,
     Alert,
+    ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +20,7 @@ import { useDownloadStore } from '../../stores/downloadStore';
 import { downloadManager } from '../../services/downloadManager';
 import { openDownload } from '../../services/playDownload';
 import { formatBytes } from '../../services/downloadUtils';
+import { resolveDownloadId } from '../../services/downloadRouting';
 import type { DownloadItem } from '../../types';
 
 // -----------------------------------------------------------------------
@@ -78,11 +80,21 @@ function EpisodeDownloadItem({
 }
 
 export default function SeriesDownloadsDetailScreen() {
-    const { id: seriesId } = useLocalSearchParams<{ id: string }>();
+    const { id: routeId } = useLocalSearchParams<{ id: string }>();
     const router = useRouter();
     const insets = useSafeAreaInsets();
 
     const items = useDownloadStore((s) => s.items);
+    const [hydrated, setHydrated] = useState(useDownloadStore.persist.hasHydrated());
+    useEffect(() => {
+        const unsubscribe = useDownloadStore.persist.onFinishHydration(() => setHydrated(true));
+        setHydrated(useDownloadStore.persist.hasHydrated());
+        return unsubscribe;
+    }, []);
+    const seriesId = useMemo(() => resolveDownloadId(
+        routeId,
+        Object.values(items).filter(i => i.itemType === 'episode').map(i => i.seriesId ?? i.mediaId),
+    ), [routeId, items]);
 
     // All downloaded episodes for this series
     const episodes = useMemo(
@@ -162,8 +174,20 @@ export default function SeriesDownloadsDetailScreen() {
     }, [episodes, title, router]);
 
     if (episodes.length === 0) {
-        // Safe check to avoid flickering/crashes during deletion
-        return null;
+        return (
+            <View style={[styles.container, { paddingTop: insets.top + Spacing.lg, paddingHorizontal: Spacing.lg }]}>
+                <StatusBar barStyle="light-content" />
+                <TouchableOpacity onPress={() => router.canGoBack() ? router.back() : router.replace('/(tabs)/downloads')} accessibilityLabel="Voltar para downloads">
+                    <Ionicons name="arrow-back" size={28} color={Colors.text} />
+                </TouchableOpacity>
+                <View style={styles.emptyContent}>
+                    {!hydrated && <ActivityIndicator color={Colors.primary} />}
+                    <Text style={styles.emptyText}>
+                        {hydrated ? 'Nenhum episódio baixado encontrado para esta série.' : 'Carregando seus downloads…'}
+                    </Text>
+                </View>
+            </View>
+        );
     }
 
     return (
@@ -238,6 +262,8 @@ export default function SeriesDownloadsDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+    emptyContent: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.md },
+    emptyText: { color: Colors.textSecondary, textAlign: 'center' },
     container: {
         flex: 1,
         backgroundColor: Colors.background,

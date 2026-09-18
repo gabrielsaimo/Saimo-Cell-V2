@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import type { Channel, CategoryId } from '../types';
-import { channels, adultChannels, categoryOrder, setRemoteChannels } from '../data/channels';
-import { registerChannel } from '../services/epgService';
-import { loadRemoteChannels, mergeChannels } from '../services/saimoSources';
+import { setRemoteChannels } from '../data/channels';
+import { plutoIdDe, registerChannel } from '../services/epgService';
+import { loadRemoteChannels } from '../services/saimoSources';
 
 function sortKey(s: string): string {
     return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -14,16 +14,14 @@ interface ChannelStore {
     currentChannelId: string | null;
     searchQuery: string;
     isLoading: boolean;
-    isProList: boolean;
-    proChannels: Channel[];
+    channels: Channel[];
 
     // Ações
     setCategory: (category: CategoryId | 'Todos' | 'Favoritos' | string) => void;
     setCurrentChannel: (channelId: string | null) => void;
     setSearchQuery: (query: string) => void;
     setLoading: (loading: boolean) => void;
-    setProList: (isPro: boolean) => void;
-    fetchProChannels: (force?: boolean) => Promise<void>;
+    fetchChannels: (force?: boolean) => Promise<void>;
 
     // Seletores
     getFilteredChannels: (includeAdult: boolean, favorites: string[]) => Channel[];
@@ -35,9 +33,7 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
     currentChannelId: null,
     searchQuery: '',
     isLoading: false,
-    // A lista compartilhada é a principal a partir da 1.4.
-    isProList: true,
-    proChannels: [],
+    channels: [],
 
     setCategory: (category) => {
         set({ selectedCategory: category });
@@ -55,53 +51,37 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
         set({ isLoading: loading });
     },
 
-    setProList: (isPro) => {
-        set({ isProList: isPro, selectedCategory: 'Todos' });
-    },
-
-    fetchProChannels: async (force = false) => {
+    fetchChannels: async (force = false) => {
         try {
             set({ isLoading: true });
-            // A lista publicada manda. O catálogo empacotado entra somente no
-            // fim, como última reserva para uma origem temporariamente fora.
-            const data = mergeChannels(await loadRemoteChannels(force), [...channels, ...adultChannels]);
-            data.forEach(ch => registerChannel(ch.id, ch.name));
+            // Há uma única lista: catálogo e reservas publicados no Git.
+            const data = await loadRemoteChannels(force);
+            data.forEach(ch => registerChannel(ch.id, ch.name, plutoIdDe(ch)));
             setRemoteChannels(data);
-            set({ proChannels: data, isLoading: false });
+            set({ channels: data, isLoading: false });
         } catch (error) {
-            console.error('Failed to fetch pro channels:', error);
+            console.error('Failed to fetch channels:', error);
             set({ isLoading: false });
         }
     },
 
     getFilteredChannels: (includeAdult: boolean, favorites: string[]) => {
-        const { selectedCategory, searchQuery, isProList, proChannels } = get();
+        const { selectedCategory, searchQuery, channels } = get();
 
-        // Base de canais
-        let allChs: Channel[] = [];
-        if (isProList) {
-            const base = includeAdult
-                ? proChannels
-                : proChannels.filter(ch => ch.category !== 'ADULTOS' && ch.category !== 'Adulto');
-            // Sort pro channels: by channelNumber if present, else by category+name
-            const proCatOrder = Array.from(new Set(base.map(ch => ch.category)));
-            allChs = [...base].sort((a, b) => {
-                const ai = proCatOrder.indexOf(a.category);
-                const bi = proCatOrder.indexOf(b.category);
-                if (ai !== bi) return ai - bi;
-                const an = a.channelNumber ?? 99999;
-                const bn = b.channelNumber ?? 99999;
-                if (an !== bn) return an - bn;
-                const ka = sortKey(a.name), kb = sortKey(b.name);
-                if (ka < kb) return -1;
-                if (ka > kb) return 1;
-                return 0;
-            });
-        } else {
-            allChs = includeAdult
-                ? [...channels, ...adultChannels]
-                : channels;
-        }
+        const base = includeAdult
+            ? channels
+            : channels.filter(ch => ch.category !== 'ADULTOS' && ch.category !== 'Adulto');
+        const categoryOrder = Array.from(new Set(base.map(ch => ch.category)));
+        let allChs = [...base].sort((a, b) => {
+            const ai = categoryOrder.indexOf(a.category);
+            const bi = categoryOrder.indexOf(b.category);
+            if (ai !== bi) return ai - bi;
+            const an = a.channelNumber ?? 99999;
+            const bn = b.channelNumber ?? 99999;
+            if (an !== bn) return an - bn;
+            const ka = sortKey(a.name), kb = sortKey(b.name);
+            return ka.localeCompare(kb);
+        });
 
         // Filtro por categoria ou resolução
         if (selectedCategory === 'Favoritos') {
@@ -133,18 +113,12 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
     },
 
     getCategories: (includeAdult: boolean) => {
-        const { isProList, proChannels } = get();
+        const { channels } = get();
         const resolutions = ['4K', 'FHD', 'HD', 'SD'];
-
-        if (isProList) {
-            const cats = Array.from(new Set(proChannels.map(ch => ch.category)));
-            const filteredCats = includeAdult ? cats : cats.filter(c => c !== 'ADULTOS' && c !== 'Adulto');
-            return ['Todos', 'Favoritos', ...resolutions, ...filteredCats];
-        }
-
-        if (includeAdult) {
-            return ['Todos', 'Favoritos', ...resolutions, ...categoryOrder];
-        }
-        return ['Todos', 'Favoritos', ...resolutions, ...categoryOrder.filter(c => c !== 'Adulto')];
+        const categories = Array.from(new Set(channels.map(ch => ch.category)));
+        const filtered = includeAdult
+            ? categories
+            : categories.filter(c => c !== 'ADULTOS' && c !== 'Adulto');
+        return ['Todos', 'Favoritos', ...resolutions, ...filtered];
     },
 }));

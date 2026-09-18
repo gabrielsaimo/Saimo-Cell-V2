@@ -11,6 +11,10 @@ import Updater from '../components/Updater';
 import { downloadManager } from '../services/downloadManager';
 import { useDownloadStore } from '../stores/downloadStore';
 import { initNotifications } from '../services/downloadNotifications';
+import { iniciar as iniciarTelemetria } from '../services/telemetria';
+
+// O monitor conta a abertura já na subida do bundle, antes da primeira tela.
+iniciarTelemetria();
 
 // Enable layout animations for 120fps transitions
 enableLayoutAnimations(true);

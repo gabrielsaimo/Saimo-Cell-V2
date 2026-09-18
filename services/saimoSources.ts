@@ -9,7 +9,7 @@ export const SAIMO_VOD_BASE = `${SAIMO_RAW_BASE}vod/`;
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
-const CACHE_PREFIX = 'saimo-source-v4:';
+const CACHE_PREFIX = 'saimo-source-v5:';
 const CACHE_TTL = 6 * 60 * 60 * 1000;
 
 interface CachedText {
@@ -52,6 +52,47 @@ function normalise(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+/** Ordem das seções da lista, a mesma do Mac e do site. */
+export const ORDEM_CATEGORIAS = [
+  'TV Aberta', 'Filmes e Séries', 'Esportes', 'Notícias', 'Infantil',
+  'Documentários', 'Pluto TV', '24 Horas', 'Variedades', 'Adulto',
+];
+
+/**
+ * Seção pelo nome, para canal sem `categoria:` — a mesma regra do Mac
+ * (Categoria.de em Model.swift), para os três apps concordarem.
+ */
+export function categoriaPeloNome(nome: string): string {
+  const n = normalise(nome);
+  const tem = (termos: string[]) => termos.some(t => n.includes(t));
+  if (tem(['pluto tv'])) return 'Pluto TV';
+  if (tem(['adulto', 'sexy hot', 'playboy', 'sex prive', 'penthouse', 'venus', 'hustler', 'private', 'brasileirinhas'])) return 'Adulto';
+  if (tem(['premiere', 'sportv', 'espn', 'combate', 'band sports', 'nsports', 'n sports', 'xsports', 'x sports', 'caze', 'tnt sports', 'fuel', 'ge tv', 'fox sports']) && !tem(['universal'])) return 'Esportes';
+  if (tem(['telecine', 'hbo', 'megapix', 'cinemax', 'paramount', 'space', 'tnt', 'amc', 'studio universal', 'sony', 'warner', 'axn', 'universal', 'cinemonde', 'darkflix', 'tcm', 'prime box', 'movies', 'cine'])) return 'Filmes e Séries';
+  if (tem(['cartoon', 'gloob', 'nick', 'discovery kids', 'boomerang', 'tooncast', 'infantil', 'kids', 'cartoonito', 'box kids', 'ra tim bum', 'babyfirst', 'dumdum', 'anime'])) return 'Infantil';
+  if (tem(['discovery', 'history', 'animal planet', 'nat geo', 'investigacao', 'h2', 'a e', 'curta', 'documenta', 'science', 'theater', 'turbo', 'world', 'id '])) return 'Documentários';
+  if (tem(['news', 'globonews', 'cnn', 'record news', 'jovem pan', 'bandnews', 'band news', 'cnbc', 'euronews', 'dw', 'times brasil', 'uol'])) return 'Notícias';
+  if (tem(['globo', 'sbt', 'record', 'band', 'redetv', 'rede tv', 'tv brasil', 'cultura', 'gazeta', 'rede vida', 'cancao nova', 'aparecida', 'senado', 'camara', 'justica', 'escola', 'futura', 'pampa', 'cnt', 'rede brasil', 'play tv', 'playtv', 'sesc'])) return 'TV Aberta';
+  return 'Variedades';
+}
+
+/** `group-title` do M3U de reservas reduzido às mesmas seções. */
+function categoriaDoGrupo(rotulo: string): string | null {
+  const n = normalise(rotulo);
+  if (!n) return null;
+  if (/(esporte|espn|premiere|sportv|combate)/.test(n)) return 'Esportes';
+  if (/(filme|serie|hbo|telecine|novela|reality)/.test(n)) return 'Filmes e Séries';
+  if (/document/.test(n)) return 'Documentários';
+  if (/(infanti|kids)/.test(n)) return 'Infantil';
+  if (/(notic|news)/.test(n)) return 'Notícias';
+  if (/aberta/.test(n)) return 'TV Aberta';
+  if (/adulto/.test(n)) return 'Adulto';
+  if (/pluto/.test(n)) return 'Pluto TV';
+  if (/24 horas/.test(n)) return '24 Horas';
+  if (/variedade/.test(n)) return 'Variedades';
+  return null;
 }
 
 function channelId(name: string): string {
@@ -110,14 +151,6 @@ function streamHeaders(stream: ChannelStream): Record<string, string> | undefine
   return Object.keys(headers).length ? headers : undefined;
 }
 
-function hasAndroidInvalidHost(stream: ChannelStream): boolean {
-  try {
-    return new URL(stream.url).hostname.split('.').some(label => label.includes('_'));
-  } catch {
-    return false;
-  }
-}
-
 function channelFrom(name: string, logo: string, category: string, streams: ChannelStream[]): Channel {
   const primary = streams[0];
   return {
@@ -139,12 +172,16 @@ export function parseChannelCatalog(text: string): Channel[] {
   const result: Channel[] = [];
   let name = '';
   let logo = '';
+  let categoria = '';
   let streams: ChannelStream[] = [];
 
   const flush = () => {
-    if (name && streams.length) result.push(channelFrom(name, logo, 'TV', streams));
+    if (name && streams.length) {
+      result.push(channelFrom(name, logo, categoria || categoriaPeloNome(name), streams));
+    }
     name = '';
     logo = '';
+    categoria = '';
     streams = [];
   };
 
@@ -162,6 +199,8 @@ export function parseChannelCatalog(text: string): Channel[] {
       name = value;
     } else if (field === 'logo') {
       logo = value;
+    } else if (field === 'categoria') {
+      categoria = value;
     } else if (field === 'fonte') {
       streams.push({ url: value });
     } else if ((field === 'referer' || field === 'agente') && streams.length) {
@@ -213,7 +252,9 @@ export function parseM3U(text: string): Channel[] {
       pending = {
         name: tvgId || rawName.replace(/\s*\([^)]+\)$/, '').trim(),
         logo: readM3UAttribute(line, 'tvg-logo'),
-        category: readM3UAttribute(line, 'group-title') || 'TV',
+        category:
+          categoriaDoGrupo(readM3UAttribute(line, 'group-title')) ||
+          categoriaPeloNome(tvgId || rawName),
       };
       continue;
     }
@@ -245,16 +286,14 @@ export function mergeChannels(primary: Channel[], extras: Channel[]): Channel[] 
     used.add(key);
     const known = new Set((channel.streams ?? []).map(stream => stream.url));
     const additional = (extra.streams ?? []).filter(stream => !known.has(stream.url));
-    // Java/ExoPlayer rejeita no TLS hosts com labels contendo underscore
-    // (caso real dos proxies HLS de Telecine). A reserva empacotada possui
-    // host Android válido, headers e ClearKey; coloque-a antes sem descartar a
-    // fonte publicada, que continua disponível para failover.
-    const streams = [...(channel.streams ?? []), ...additional]
-      .sort((left, right) => Number(hasAndroidInvalidHost(left)) - Number(hasAndroidInvalidHost(right)));
+    // O catálogo rico publicado permanece na frente; as entradas do M3U Git
+    // são reservas. O Android adapta nativamente os hosts especiais Telecine.
+    const streams = [...(channel.streams ?? []), ...additional];
     const first = streams[0];
     return {
       ...channel,
-      category: extra.category || channel.category,
+      // O catálogo declara a seção de cada canal; o M3U só completa.
+      category: channel.category || extra.category,
       logo: channel.logo || extra.logo,
       streams,
       url: first?.url ?? channel.url,
@@ -267,15 +306,32 @@ export function mergeChannels(primary: Channel[], extras: Channel[]): Channel[] 
 }
 
 export async function loadRemoteChannels(force = false): Promise<Channel[]> {
-  const [catalog, extras] = await Promise.allSettled([
+  const [catalog, extras, restritos] = await Promise.allSettled([
     fetchText(`${SAIMO_RAW_BASE}catalogo.txt`, 'catalogo.txt', force),
     fetchText(`${SAIMO_RAW_BASE}canais.txt`, 'canais.txt', force),
+    fetchText(`${SAIMO_RAW_BASE}restritos.txt`, 'restritos.txt', force),
   ]);
   const primary = catalog.status === 'fulfilled' ? parseChannelCatalog(catalog.value) : [];
   const reserves = extras.status === 'fulfilled' ? parseM3U(extras.value) : [];
   const merged = mergeChannels(primary, reserves);
   if (!merged.length) throw new Error('A lista remota não contém canais válidos');
-  return merged;
+  // Os adultos moram à parte, iguais aos do Mac e do TV Box; a tela só os
+  // mostra depois do PIN (channelStore filtra a categoria 'Adulto').
+  if (restritos.status === 'fulfilled') {
+    const nomes = new Set(merged.map(channel => normalise(channel.name)));
+    for (const channel of parseChannelCatalog(restritos.value)) {
+      if (nomes.has(normalise(channel.name))) continue;
+      merged.push({ ...channel, category: 'Adulto' });
+    }
+  }
+  // Seção por seção, como no Mac e no site, e o número acompanha a ordem.
+  const posicao = (categoria: string) => {
+    const i = ORDEM_CATEGORIAS.indexOf(categoria);
+    return i < 0 ? ORDEM_CATEGORIAS.length : i;
+  };
+  return [...merged]
+    .sort((a, b) => posicao(a.category) - posicao(b.category) || a.name.localeCompare(b.name, 'pt-BR'))
+    .map((channel, index) => ({ ...channel, channelNumber: index + 1 }));
 }
 
 export function parseVodIndex(text: string): VodIndex {

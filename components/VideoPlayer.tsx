@@ -10,6 +10,7 @@ import {
   BackHandler,
   Platform,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import Video, { DRMType, SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
 import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
@@ -26,6 +27,7 @@ import { useFavoritesStore } from '../stores/favoritesStore';
 import { getCurrentProgram, fetchChannelEPG, onEPGUpdate } from '../services/epgService';
 import EPGGuideModal from './EPGGuideModal';
 import { configureClearKey } from '../services/clearKeyServer';
+import * as telemetria from '../services/telemetria';
 
 function toResLabel(h: number): string {
   if (h >= 2160) return '4K';
@@ -35,6 +37,12 @@ function toResLabel(h: number): string {
   if (h >= 480) return '480p';
   if (h >= 360) return '360p';
   return `${h}p`;
+}
+
+/** Só o servidor: é o que diferencia uma fonte da outra para quem escolhe. */
+function hostDe(url: string): string {
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/:?#]+)/i.exec(url);
+  return m ? m[1].replace(/^www\./, '') : url.slice(0, 40);
 }
 
 function formatTime(d: Date): string {
@@ -52,6 +60,11 @@ function formatRemaining(min?: number): string {
 interface VideoPlayerProps {
   channel: Channel;
 }
+
+/** Quanto tempo de tela parada conta como fonte caída. */
+const SEM_IMAGEM_MS = 25_000;
+/** Quantas vezes a mesma fonte é reaberta antes de descer para a seguinte. */
+const RETOMADAS_MAX = 3;
 
 export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const router = useRouter();
@@ -78,7 +91,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const [showGuide, setShowGuide] = useState(false);
   const [osdVisible, setOsdVisible] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [menuPage, setMenuPage] = useState<'main' | 'audio' | 'video' | 'cc'>('main');
+  const [menuPage, setMenuPage] = useState<'main' | 'audio' | 'video' | 'cc' | 'fontes'>('main');
   const [videoKey, setVideoKey] = useState(0);
   const [isCasting, setIsCasting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -253,14 +266,59 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     }
     setHasError(false);
     setIsLoading(false);
+    if (!tentativaRef.current.avisado) {
+      tentativaRef.current.avisado = true;
+      const n = noArRef.current;
+      telemetria.tocou('live', n.nome, n.url, n.fonte, Date.now() - tentativaRef.current.desde);
+    }
     const h = data?.naturalSize?.height;
     if (h && h > 0) setVideoResolution(toResLabel(h));
   }, []);
 
-  const onError = useCallback(() => {
+  /*
+   * Prova de vida da fonte: o relógio do vídeo andando.
+   *
+   * Erro de player não é prova de queda — no celular a rede troca de antena, o
+   * CDN devolve 5xx solto, um segmento se perde. Trocar de fonte a cada tropeço
+   * recomeça o canal noutro servidor na frente de quem está assistindo, e às
+   * vezes na fonte pior. Enquanto sai imagem, o erro é atendido na mesma fonte.
+   */
+  const ultimoTempoRef = useRef(-1);
+  const ultimoAvancoRef = useRef(0);
+  const retomadasRef = useRef(0);
+
+  const onProgress = useCallback(({ currentTime }: { currentTime: number }) => {
+    if (currentTime > ultimoTempoRef.current + 0.2) {
+      ultimoTempoRef.current = currentTime;
+      ultimoAvancoRef.current = Date.now();
+      retomadasRef.current = 0;
+    } else if (currentTime < ultimoTempoRef.current - 1) {
+      // Relógio para trás é fluxo recomeçado: recomeça a contagem dali.
+      ultimoTempoRef.current = currentTime;
+      ultimoAvancoRef.current = Date.now();
+    }
+  }, []);
+
+  const onError = useCallback((erro?: any) => {
     if (!isMountedRef.current) return;
     setIsLoading(false);
     const streams = activeChannel.streams ?? [];
+    // Uma falha por fonte, não uma a cada reconexão de dois segundos.
+    if (!isRetryingRef.current) {
+      const detalhe = String(erro?.error?.errorString ?? erro?.error?.errorCode ?? erro?.error?.localizedDescription ?? 'erro do player');
+      telemetria.falhou('live', activeChannel.name, activeStream.url, sourceIndex + 1, detalhe);
+    }
+    // A fonte estava entregando imagem até agora há pouco: o erro foi tropeço
+    // de rede. Reabre o mesmo endereço em vez de trocar de origem.
+    const entregandoImagem = ultimoAvancoRef.current > 0
+      && Date.now() - ultimoAvancoRef.current < SEM_IMAGEM_MS;
+    if (entregandoImagem && retomadasRef.current < RETOMADAS_MAX) {
+      retomadasRef.current += 1;
+      setHasError(false);
+      setIsLoading(true);
+      setVideoKey(key => key + 1);
+      return;
+    }
     if (sourceIndex + 1 < streams.length) {
       setSourceIndex(index => index + 1);
       setHasError(false);
@@ -283,7 +341,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
       if (!isMountedRef.current || !isRetryingRef.current) return;
       setVideoKey(k => k + 1);
     }, 2000);
-  }, [activeChannel.streams, sourceIndex]);
+  }, [activeChannel.streams, activeChannel.name, activeStream.url, sourceIndex]);
 
   const onAudioTracks = useCallback((data: any) => {
     setAudioTracks(data?.audioTracks ?? []);
@@ -309,6 +367,62 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     if (retryIntervalRef.current) { clearTimeout(retryIntervalRef.current); retryIntervalRef.current = null; }
     setVideoKey(k => k + 1);
   }, []);
+
+  // Escolha manual, como no site e no Mac: a troca automática continua valendo
+  // a partir da fonte escolhida se ela também cair.
+  const escolherFonte = useCallback((indice: number) => {
+    escolhaManualRef.current = true;
+    isRetryingRef.current = false;
+    setIsRetrying(false);
+    if (retryTimerRef.current)    { clearTimeout(retryTimerRef.current);    retryTimerRef.current    = null; }
+    if (retryIntervalRef.current) { clearTimeout(retryIntervalRef.current); retryIntervalRef.current = null; }
+    setHasError(false);
+    setIsLoading(true);
+    setVideoResolution(null);
+    setSourceIndex(indice);
+    setVideoKey(k => k + 1);
+    setMenuPage('main');
+    setShowMenu(false);
+  }, []);
+
+  const totalDeFontes = activeChannel.streams?.length ?? 1;
+
+  // ─── Monitor ───
+  // Trocar de canal ou escolher fonte à mão é abertura; a próxima fonte depois
+  // de uma falha, não.
+  const canalAvisadoRef = useRef<string | null>(null);
+  const escolhaManualRef = useRef(false);
+  const tentativaRef = useRef<{ desde: number; avisado: boolean }>({ desde: Date.now(), avisado: false });
+  // onLoad é memorizado sem dependências; lê o que está no ar por aqui.
+  const noArRef = useRef({ nome: activeChannel.name, url: activeStream.url, fonte: sourceIndex + 1 });
+  noArRef.current = { nome: activeChannel.name, url: activeStream.url, fonte: sourceIndex + 1 };
+  useEffect(() => {
+    const nova = canalAvisadoRef.current !== activeChannel.id || escolhaManualRef.current;
+    canalAvisadoRef.current = activeChannel.id;
+    escolhaManualRef.current = false;
+    tentativaRef.current = { desde: Date.now(), avisado: false };
+    ultimoTempoRef.current = -1;
+    ultimoAvancoRef.current = 0;
+    retomadasRef.current = 0;
+    telemetria.comecou('live', activeChannel.name, activeStream.url, sourceIndex + 1, nova);
+  }, [activeChannel.id, sourceIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (hasError) telemetria.caiu('live', activeChannel.name, totalDeFontes);
+  }, [hasError]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => telemetria.parou(), []);
+  // Canal ao vivo não pausa aqui; o que para a conta é carregar.
+  const [carregando, setCarregando] = useState(false);
+  const onBuffer = useCallback(({ isBuffering }: { isBuffering: boolean }) => {
+    if (isMountedRef.current) setCarregando(isBuffering);
+  }, []);
+  useEffect(() => {
+    telemetria.video({
+      rodando: tentativaRef.current.avisado && !hasError,
+      pausado: false,
+      carregando: isLoading || isRetrying || carregando,
+      qualidade: videoResolution,
+    });
+  }, [isLoading, isRetrying, carregando, hasError, videoResolution]);
 
   const onBandwidthUpdate = useCallback((data: any) => {
     if (!isMountedRef.current) return;
@@ -370,6 +484,8 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             resizeMode="contain"
             onLoad={onLoad}
             onError={onError}
+            onProgress={onProgress}
+            onBuffer={onBuffer}
             onAudioTracks={onAudioTracks}
             onVideoTracks={onVideoTracks}
             onTextTracks={onTextTracks}
@@ -423,6 +539,14 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               <Ionicons name="refresh" size={20} color={Colors.text} />
               <Text style={styles.retryText}>Tentar novamente</Text>
             </TouchableOpacity>
+            {totalDeFontes > 1 && (
+              <TouchableOpacity
+                style={styles.backButtonError}
+                onPress={() => { setMenuPage('fontes'); setShowMenu(true); }}
+              >
+                <Text style={styles.backButtonText}>Escolher outra fonte</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.backButtonError} onPress={handleBack}>
               <Text style={styles.backButtonText}>Voltar aos canais</Text>
             </TouchableOpacity>
@@ -439,6 +563,14 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             <View style={styles.castWrap}>
               <CastButton style={{ width: 24, height: 24, tintColor: Colors.text }} />
             </View>
+            {totalDeFontes > 1 && (
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={() => { setMenuPage('fontes'); setShowMenu(true); }}
+              >
+                <Ionicons name="swap-horizontal" size={22} color={Colors.text} />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.iconButton} onPress={() => setShowGuide(true)}>
               <Ionicons name="list" size={22} color={Colors.text} />
             </TouchableOpacity>
@@ -569,6 +701,16 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                   <Text style={styles.menuItemText}>Guia de Programação</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  style={[styles.menuItem, totalDeFontes <= 1 && styles.menuItemDisabled]}
+                  disabled={totalDeFontes <= 1}
+                  onPress={() => setMenuPage('fontes')}
+                >
+                  <Ionicons name="swap-horizontal" size={20} color={Colors.text} />
+                  <Text style={styles.menuItemText}>
+                    Fonte · {Math.min(sourceIndex + 1, totalDeFontes)} de {totalDeFontes}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[styles.menuItem, audioTracks.length === 0 && styles.menuItemDisabled]}
                   disabled={audioTracks.length === 0}
                   onPress={() => setMenuPage('audio')}
@@ -604,6 +746,27 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                   </Text>
                 </TouchableOpacity>
               </>
+            )}
+
+            {menuPage === 'fontes' && (
+              <ScrollView style={{ maxHeight: 360 }}>
+                {(activeChannel.streams ?? []).map((stream, i) => (
+                  <TouchableOpacity
+                    key={`${i}-${stream.url}`}
+                    style={styles.menuItem}
+                    onPress={() => escolherFonte(i)}
+                  >
+                    <Ionicons
+                      name={sourceIndex === i ? 'radio-button-on' : 'radio-button-off'}
+                      size={18}
+                      color={Colors.text}
+                    />
+                    <Text style={styles.menuItemText} numberOfLines={1}>
+                      Fonte {i + 1} · {hostDe(stream.url)}{stream.drm?.clearKey ? ' · DRM' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             )}
 
             {menuPage === 'audio' && audioTracks.map((track: any, i: number) => (

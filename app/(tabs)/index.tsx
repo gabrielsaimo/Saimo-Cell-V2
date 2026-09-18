@@ -6,7 +6,6 @@ import {
   StatusBar,
   TextInput,
   TouchableOpacity,
-  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +19,7 @@ import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
 import EPGGuideModal from '../../components/EPGGuideModal';
+import * as telemetria from '../../services/telemetria';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -37,10 +37,8 @@ export default function HomeScreen() {
     setCategory, 
     getFilteredChannels, 
     getCategories,
-    isProList,
-    setProList,
-    proChannels,
-    fetchProChannels,
+    channels: remoteChannels,
+    fetchChannels,
   } = useChannelStore();
   
   const { favorites } = useFavoritesStore();
@@ -55,9 +53,9 @@ export default function HomeScreen() {
 
   // Memoize categories to prevent re-creation on every render
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const categories = useMemo(() => getCategories(adultUnlocked), [adultUnlocked, getCategories, isProList, proChannels]);
+  const categories = useMemo(() => getCategories(adultUnlocked), [adultUnlocked, getCategories, remoteChannels]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allChannels = useMemo(() => getFilteredChannels(adultUnlocked, favorites), [adultUnlocked, favorites, getFilteredChannels, isProList, proChannels]);
+  const allChannels = useMemo(() => getFilteredChannels(adultUnlocked, favorites), [adultUnlocked, favorites, getFilteredChannels, remoteChannels]);
 
   // Filtra por busca
   const channels = useMemo(() => {
@@ -68,10 +66,14 @@ export default function HomeScreen() {
       ch.category.toLowerCase().includes(query)
     );
   }, [allChannels, searchQuery]);
+  useEffect(() => {
+    const achou = channels.length > 0;
+    telemetria.buscou('live', searchQuery, () => achou);
+  }, [channels, searchQuery]);
 
   useEffect(() => {
-    if (proChannels.length === 0) fetchProChannels();
-  }, [fetchProChannels, proChannels.length]);
+    if (remoteChannels.length === 0) fetchChannels();
+  }, [fetchChannels, remoteChannels.length]);
 
   useEffect(() => {
     const unsubProg = onEPGProgress((progress, loaded, total) => {
@@ -82,13 +84,6 @@ export default function HomeScreen() {
     });
     return () => { unsubProg(); unsubState(); };
   }, []);
-
-  const handleTogglePro = useCallback((val: boolean) => {
-    setProList(val);
-    if (val && proChannels.length === 0) {
-      fetchProChannels();
-    }
-  }, [setProList, fetchProChannels, proChannels.length]);
 
   const handleSelectCategory = useCallback((category: string) => {
     if (category === 'Adulto' && !adultUnlocked) {
@@ -133,17 +128,6 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>{channels.length} canais</Text>
           </View>
           <View style={styles.headerActions}>
-            <View style={styles.proToggleContainer}>
-              <Text style={styles.proToggleText}>Lite</Text>
-              <Switch
-                value={isProList}
-                onValueChange={handleTogglePro}
-                trackColor={{ false: Colors.surface, true: Colors.primary }}
-                thumbColor={isProList ? '#fff' : '#ccc'}
-                ios_backgroundColor={Colors.surface}
-              />
-              <Text style={styles.proToggleText}>Pro</Text>
-            </View>
             <TouchableOpacity
               style={styles.searchButton}
               onPress={() => setShowEPGGuide(true)}
@@ -259,20 +243,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
-  },
-  proToggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.surface,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.full,
-    gap: 4,
-  },
-  proToggleText: {
-    color: Colors.text,
-    fontSize: Typography.caption.fontSize,
-    fontWeight: '600',
   },
   searchButton: {
     padding: Spacing.sm,
