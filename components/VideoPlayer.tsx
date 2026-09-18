@@ -478,7 +478,16 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
           <Video
             key={videoKey}
             ref={videoRef}
-            source={{ uri: activeStream.url, headers: activeStream.headers }}
+            source={{
+              uri: activeStream.url,
+              headers: activeStream.headers,
+              // O servidor novo publica playlists HLS com extensão `.txt`.
+              // Sem indicar o tipo, o ExoPlayer tenta tratá-las como vídeo direto.
+              type: activeStream.url.includes('s21-cloudfront-net.lat/ss/')
+                && activeStream.url.split('?')[0].endsWith('.txt')
+                ? 'm3u8'
+                : undefined,
+            }}
             drm={drmConfig}
             style={styles.video}
             resizeMode="contain"
