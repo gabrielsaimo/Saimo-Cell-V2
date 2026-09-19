@@ -33,7 +33,7 @@ export async function resolveUrlViaGet(url: string, timeoutMs = 8000): Promise<s
 
 export function detectSourceType(url: string): string | undefined {
     const lower = url.toLowerCase().split('?')[0];
-    if (lower.endsWith('.m3u8') || lower.includes('m3u8')) return 'm3u8';
+    if (lower.endsWith('.m3u8') || lower.includes('m3u8') || lower.split('?')[0].endsWith('.txt')) return 'm3u8';
     if (lower.endsWith('.mpd')) return 'mpd';
     if (lower.endsWith('.mp4')) return 'mp4';
     if (lower.endsWith('.mkv')) return 'mkv';

@@ -39,6 +39,12 @@ function toResLabel(h: number): string {
   return `${h}p`;
 }
 
+function detailedResLabel(width?: number, height?: number): string | null {
+  if (!height || height <= 0) return null;
+  const size = width && width > 0 ? `${width}×${height} · ` : '';
+  return `${size}${toResLabel(height)}`;
+}
+
 /** Só o servidor: é o que diferencia uma fonte da outra para quem escolhe. */
 function hostDe(url: string): string {
   const m = /^[a-z][a-z0-9+.-]*:\/\/([^/:?#]+)/i.exec(url);
@@ -271,8 +277,9 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
       const n = noArRef.current;
       telemetria.tocou('live', n.nome, n.url, n.fonte, Date.now() - tentativaRef.current.desde);
     }
-    const h = data?.naturalSize?.height;
-    if (h && h > 0) setVideoResolution(toResLabel(h));
+    const natural = data?.naturalSize;
+    const label = detailedResLabel(natural?.width, natural?.height);
+    if (label) setVideoResolution(label);
   }, []);
 
   /*
@@ -350,8 +357,6 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const onVideoTracks = useCallback((data: any) => {
     const tracks = data?.videoTracks ?? [];
     setVideoTracks(tracks);
-    const maxH = tracks.reduce((m: number, t: any) => Math.max(m, t.height ?? 0), 0);
-    if (maxH > 0) setVideoResolution(toResLabel(maxH));
   }, []);
 
   const onTextTracks = useCallback((data: any) => {
@@ -426,8 +431,8 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 
   const onBandwidthUpdate = useCallback((data: any) => {
     if (!isMountedRef.current) return;
-    const h = data?.height;
-    if (h && h > 0) setVideoResolution(toResLabel(h));
+    const label = detailedResLabel(data?.width, data?.height);
+    if (label) setVideoResolution(label);
   }, []);
 
   // ─── DRM config ───
@@ -481,10 +486,10 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             source={{
               uri: activeStream.url,
               headers: activeStream.headers,
-              // O servidor novo publica playlists HLS com extensão `.txt`.
-              // Sem indicar o tipo, o ExoPlayer tenta tratá-las como vídeo direto.
-              type: activeStream.url.includes('s21-cloudfront-net.lat/ss/')
-                && activeStream.url.split('?')[0].endsWith('.txt')
+              // Há provedores que publicam o master HLS como text/plain e com
+              // extensão `.txt`. Como este campo já é uma fonte de mídia, todo
+              // `.txt` aqui deve ir explicitamente para o demuxer HLS.
+              type: activeStream.url.split('?')[0].toLowerCase().endsWith('.txt')
                 ? 'm3u8'
                 : undefined,
             }}
@@ -499,6 +504,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             onVideoTracks={onVideoTracks}
             onTextTracks={onTextTracks}
             onBandwidthUpdate={onBandwidthUpdate}
+            reportBandwidth={true}
             selectedAudioTrack={selectedAudioIdx !== null
               ? { type: SelectedTrackType.INDEX, value: selectedAudioIdx }
               : { type: SelectedTrackType.SYSTEM }}
@@ -738,7 +744,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                   <Text style={styles.menuItemText}>
                     Qualidade{selectedVideoTrackId !== null
                       ? (() => {
-                          const t = videoTracks.find(v => v.trackId === selectedVideoTrackId);
+                          const t = videoTracks[selectedVideoTrackId];
                           return t ? ` · ${t.height ? t.height + 'p' : 'Manual'}` : '';
                         })()
                       : ' · Auto'}
@@ -795,13 +801,13 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
 
             {menuPage === 'video' && [null, ...videoTracks].map((track: any, i: number) => {
               const label = i === 0 ? 'Automático' : track?.height ? `${track.height}p` : `Qualidade ${i}`;
-              const isActive = i === 0 ? selectedVideoTrackId === null : track?.trackId === selectedVideoTrackId;
+              const isActive = i === 0 ? selectedVideoTrackId === null : selectedVideoTrackId === i - 1;
               return (
                 <TouchableOpacity
                   key={i}
                   style={styles.menuItem}
                   onPress={() => {
-                    setSelectedVideoTrackId(i === 0 ? null : track?.trackId ?? null);
+                    setSelectedVideoTrackId(i === 0 ? null : i - 1);
                     setMenuPage('main');
                   }}
                 >

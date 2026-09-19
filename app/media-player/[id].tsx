@@ -6,7 +6,7 @@ import {
     StatusBar, BackHandler, Dimensions, ActivityIndicator,
     Platform, Animated, PanResponder, Modal,
 } from 'react-native';
-import Video, { SelectedTrackType, VideoRef } from 'react-native-video';
+import Video, { SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -61,6 +61,17 @@ function toResLabel(h: number): string {
     if (h >= 720) return '720p';
     if (h >= 480) return '480p';
     return `${h}p`;
+}
+
+function detailedResLabel(width?: number, height?: number): string | null {
+    if (!height || height <= 0) return null;
+    const size = width && width > 0 ? `${width}×${height} · ` : '';
+    return `${size}${toResLabel(height)}`;
+}
+
+function sourceHost(url: string): string {
+    const match = /^[a-z][a-z0-9+.-]*:\/\/([^/:?#]+)/i.exec(url);
+    return match ? match[1].replace(/^www\./, '') : url.slice(0, 38);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,6 +430,8 @@ export default function MediaPlayerScreen() {
     // ── Episode state ──────────────────────────────────────────────────────
     const [currentTitle, setCurrentTitle] = useState(params.title || '');
     const [activeUrl, setActiveUrl] = useState(decodedUrl);
+    const [playbackSources, setPlaybackSources] = useState(sourceUrls);
+    const [selectedSource, setSelectedSource] = useState(0);
     const sourceIndexRef = useRef(0);
     const [nextEpisode] = useState<{
         id: string; url: string; title: string; season: string; episode: string;
@@ -506,10 +519,14 @@ export default function MediaPlayerScreen() {
     const [isPiP, setIsPiP] = useState(false);
     const [audioTracks, setAudioTracks] = useState<Array<{ id: number; label: string }>>([]);
     const [textTracks, setTextTracks] = useState<Array<{ id: number; label: string }>>([]);
+    const [videoTracks, setVideoTracks] = useState<Array<{ id: number; label: string }>>([]);
     const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
     const [selectedText, setSelectedText] = useState<number | null>(null);
+    const [selectedVideo, setSelectedVideo] = useState<number | null>(null);
     const [showAudioSheet, setShowAudioSheet] = useState(false);
     const [showTextSheet, setShowTextSheet] = useState(false);
+    const [showVideoSheet, setShowVideoSheet] = useState(false);
+    const [showSourceSheet, setShowSourceSheet] = useState(false);
     const brightnessRef = useRef<number>(1); // original brightness to restore
 
     // ── OSD state ──────────────────────────────────────────────────────────
@@ -611,11 +628,13 @@ export default function MediaPlayerScreen() {
             if (showSleep) { setShowSleep(false); return true; }
             if (showAudioSheet) { setShowAudioSheet(false); return true; }
             if (showTextSheet) { setShowTextSheet(false); return true; }
+            if (showVideoSheet) { setShowVideoSheet(false); return true; }
+            if (showSourceSheet) { setShowSourceSheet(false); setPaused(false); return true; }
             handleClose();
             return true;
         });
         return () => sub.remove();
-    }, [locked, showSpeed, showSleep, showAudioSheet, showTextSheet]);
+    }, [locked, showSpeed, showSleep, showAudioSheet, showTextSheet, showVideoSheet, showSourceSheet]);
 
     // ─────────────────────────────────────────────────────────────────────
     // URL resolution + strategy
@@ -624,7 +643,13 @@ export default function MediaPlayerScreen() {
     useEffect(() => {
         if (!sourceUrls[0]) { setHasError(true); setErrorMsg('URL inválida'); setIsLoading(false); return; }
         sourceIndexRef.current = 0;
+        setPlaybackSources(sourceUrls);
+        setSelectedSource(0);
         setActiveUrl(sourceUrls[0]);
+        if (!isOffline && sourceUrls.length > 1) {
+            setPaused(true);
+            setShowSourceSheet(true);
+        }
         if (isOffline) { setResolvedUrl(sourceUrls[0]); return; }
         // Start with strategy 0 (VLC UA), no pre-fetch needed
         setResolvedUrl(sourceUrls[0]);
@@ -660,11 +685,12 @@ export default function MediaPlayerScreen() {
         }
 
         // Esgotou os cabeçalhos desta fonte: avança para a próxima publicada.
-        if (next >= STRATEGIES.length && sourceIndexRef.current + 1 < sourceUrls.length && !isOffline) {
+        if (next >= STRATEGIES.length && sourceIndexRef.current + 1 < playbackSources.length && !isOffline) {
             const m = monitorRef.current;
             if (m) telemetria.falhou('vod', m.titulo, m.url, sourceIndexRef.current + 1, 'nenhum cabeçalho abriu');
             sourceIndexRef.current += 1;
-            const fallback = sourceUrls[sourceIndexRef.current];
+            const fallback = playbackSources[sourceIndexRef.current];
+            setSelectedSource(sourceIndexRef.current);
             setActiveUrl(fallback);
             setResolvedUrl(fallback);
             strategyIdxRef.current = 0;
@@ -718,7 +744,7 @@ export default function MediaPlayerScreen() {
         setIsLoading(true);
         setHasError(false);
         setVideoKey((k) => k + 1);
-    }, [activeUrl, sourceUrls, isOffline, params.id, params.seriesId, params.season]);
+    }, [activeUrl, playbackSources, isOffline, params.id, params.seriesId, params.season]);
 
     // ─────────────────────────────────────────────────────────────────────
     // Cast
@@ -787,20 +813,21 @@ export default function MediaPlayerScreen() {
         }
         const d = data?.duration;
         if (d && isFinite(d) && d > 0) setDuration(d);
-        const h = data?.naturalSize?.height;
-        if (h && h > 0) setResolution(toResLabel(h));
+        const natural = data?.naturalSize;
+        const label = detailedResLabel(natural?.width, natural?.height);
+        if (label) setResolution(label);
 
         // Capture tracks
         if (data.audioTracks) {
-            setAudioTracks(data.audioTracks.map((t: any) => ({
-                id: t.index,
-                label: t.language || t.title || `Áudio ${t.index + 1}`
+            setAudioTracks(data.audioTracks.map((t: any, index: number) => ({
+                id: index,
+                label: t.language || t.title || `Áudio ${index + 1}`
             })));
         }
         if (data.textTracks) {
-            setTextTracks(data.textTracks.map((t: any) => ({
-                id: t.index,
-                label: t.language || t.title || `Legenda ${t.index + 1}`
+            setTextTracks(data.textTracks.map((t: any, index: number) => ({
+                id: index,
+                label: t.language || t.title || `Legenda ${index + 1}`
             })));
         }
 
@@ -835,8 +862,15 @@ export default function MediaPlayerScreen() {
 
     const onVideoTracks = useCallback((data: any) => {
         const tracks = data?.videoTracks ?? [];
-        const maxH = tracks.reduce((m: number, t: any) => Math.max(m, t.height ?? 0), 0);
-        if (maxH > 0) setResolution(toResLabel(maxH));
+        setVideoTracks(tracks.map((t: any, index: number) => ({
+            id: index,
+            label: t.height ? toResLabel(t.height) : (t.title || `Qualidade ${index + 1}`),
+        })));
+    }, []);
+
+    const onBandwidthUpdate = useCallback((data: any) => {
+        const label = detailedResLabel(data?.width, data?.height);
+        if (label) setResolution(label);
     }, []);
 
     const onError = useCallback((_err: any) => {
@@ -857,7 +891,7 @@ export default function MediaPlayerScreen() {
         const m = monitorRef.current;
         if (!hasError || !m || isOffline) return;
         telemetria.falhou('vod', m.titulo, m.url, sourceIndexRef.current + 1, errorMsg || 'não abriu');
-        telemetria.caiu('vod', m.titulo, sourceUrls.length);
+        telemetria.caiu('vod', m.titulo, playbackSources.length);
     }, [hasError]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => () => telemetria.parou(), []);
     // O monitor só conta o tempo com o filme andando: pausado não é assistir.
@@ -904,6 +938,10 @@ export default function MediaPlayerScreen() {
 
     const handleTextSelect = useCallback((id: number | string) => {
         setSelectedText(id as number);
+    }, []);
+
+    const handleVideoSelect = useCallback((id: number | string) => {
+        setSelectedVideo(Number(id) < 0 ? null : id as number);
     }, []);
 
     // ─────────────────────────────────────────────────────────────────────
@@ -986,8 +1024,20 @@ export default function MediaPlayerScreen() {
         hasFetchedFreshUrl.current = false;
         setActiveUrl(next.url);
         setResolvedUrl(next.url);
+        let nextList = [next.url];
+        try {
+            const extra = params.nextSources ? JSON.parse(decodeURIComponent(params.nextSources)) : [];
+            nextList = Array.from(new Set([next.url, ...extra].filter(Boolean))) as string[];
+        } catch { /* mantém a URL principal do próximo episódio */ }
+        setPlaybackSources(nextList);
+        sourceIndexRef.current = 0;
+        setSelectedSource(0);
+        if (nextList.length > 1) {
+            setPaused(true);
+            setShowSourceSheet(true);
+        }
         setVideoKey((k) => k + 1);
-    }, [resolvedNextEpisode, params.seriesId, params.season, setSeriesProgress, isOffline, items, router]);
+    }, [resolvedNextEpisode, params.seriesId, params.season, params.nextSources, setSeriesProgress, isOffline, items, router]);
     handleNextEpisodeRef.current = handleNextEpisode;
     const toggleAspectRatio = useCallback(() => {
         setResizeMode((prev) => {
@@ -1138,6 +1188,27 @@ export default function MediaPlayerScreen() {
         setVideoKey((k) => k + 1);
     }, [activeUrl]);
 
+    const handleSourceSelect = useCallback((id: number | string) => {
+        const index = typeof id === 'number' ? id : Number(id);
+        const url = playbackSources[index];
+        if (!url) return;
+        sourceIndexRef.current = index;
+        setSelectedSource(index);
+        setActiveUrl(url);
+        setResolvedUrl(url);
+        strategyIdxRef.current = 0;
+        setStrategyIdx(0);
+        hasFetchedFreshUrl.current = false;
+        setSelectedAudio(null);
+        setSelectedText(null);
+        setSelectedVideo(null);
+        setResolution(null);
+        setHasError(false);
+        setIsLoading(true);
+        setPaused(false);
+        setVideoKey((key) => key + 1);
+    }, [playbackSources]);
+
     // ─────────────────────────────────────────────────────────────────────
     // Render
     // ─────────────────────────────────────────────────────────────────────
@@ -1161,6 +1232,9 @@ export default function MediaPlayerScreen() {
                     volume={volume}
                     selectedAudioTrack={selectedAudio !== null ? { type: SelectedTrackType.INDEX, value: selectedAudio } : undefined}
                     selectedTextTrack={selectedText !== null ? { type: SelectedTrackType.INDEX, value: selectedText } : undefined}
+                    selectedVideoTrack={selectedVideo !== null
+                        ? { type: SelectedVideoTrackType.INDEX, value: selectedVideo }
+                        : { type: SelectedVideoTrackType.AUTO }}
                     controls={false}
                     ignoreSilentSwitch="ignore"
                     playInBackground={true}
@@ -1171,6 +1245,8 @@ export default function MediaPlayerScreen() {
                     onBuffer={onBuffer}
                     onEnd={onEnd}
                     onVideoTracks={onVideoTracks}
+                    onBandwidthUpdate={onBandwidthUpdate}
+                    reportBandwidth={true}
                     onPictureInPictureStatusChanged={onPictureInPictureStatusChanged}
                     bufferConfig={{
                         minBufferMs: 15000,
@@ -1359,10 +1435,28 @@ export default function MediaPlayerScreen() {
                             </TouchableOpacity>
 
                             <View style={styles.toolRight}>
-                                {(audioTracks.length > 0 || textTracks.length > 0) && (
+                                {playbackSources.length > 1 && (
+                                    <TouchableOpacity style={styles.toolBtn} onPress={() => setShowSourceSheet(true)}>
+                                        <MaterialIcons name="swap-horizontal-circle" size={19} color="#fff" />
+                                        <Text style={styles.toolLabel}>Fonte {selectedSource + 1}</Text>
+                                    </TouchableOpacity>
+                                )}
+                                {videoTracks.length > 0 && (
+                                    <TouchableOpacity style={styles.toolBtn} onPress={() => setShowVideoSheet(true)}>
+                                        <MaterialIcons name="high-quality" size={19} color="#fff" />
+                                        <Text style={styles.toolLabel}>Qualidade</Text>
+                                    </TouchableOpacity>
+                                )}
+                                {audioTracks.length > 0 && (
                                     <TouchableOpacity style={styles.toolBtn} onPress={() => setShowAudioSheet(true)}>
+                                        <MaterialIcons name="audiotrack" size={19} color="#fff" />
+                                        <Text style={styles.toolLabel}>Áudio</Text>
+                                    </TouchableOpacity>
+                                )}
+                                {textTracks.length > 0 && (
+                                    <TouchableOpacity style={styles.toolBtn} onPress={() => setShowTextSheet(true)}>
                                         <MaterialIcons name="subtitles" size={19} color="#fff" />
-                                        <Text style={styles.toolLabel}>Trilhas</Text>
+                                        <Text style={styles.toolLabel}>Legendas</Text>
                                     </TouchableOpacity>
                                 )}
                                 {!isOffline && (
@@ -1431,6 +1525,27 @@ export default function MediaPlayerScreen() {
                 selectedId={selectedText}
                 onSelect={handleTextSelect}
                 onClose={() => setShowTextSheet(false)}
+            />
+
+            <TrackSheet
+                visible={showVideoSheet}
+                title="Qualidade da Imagem"
+                tracks={[{ id: -1, label: 'Automática' }, ...videoTracks]}
+                selectedId={selectedVideo ?? -1}
+                onSelect={handleVideoSelect}
+                onClose={() => setShowVideoSheet(false)}
+            />
+
+            <TrackSheet
+                visible={showSourceSheet}
+                title="Escolha a fonte"
+                tracks={playbackSources.map((url, index) => ({
+                    id: index,
+                    label: `Fonte ${index + 1} · ${sourceHost(url)}`,
+                }))}
+                selectedId={selectedSource}
+                onSelect={handleSourceSelect}
+                onClose={() => { setShowSourceSheet(false); setPaused(false); }}
             />
         </View>
     );

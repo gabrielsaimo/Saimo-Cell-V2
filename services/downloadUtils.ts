@@ -85,7 +85,8 @@ export async function getFreeSpace(): Promise<number> {
 }
 
 export function isHlsUrl(url: string): boolean {
-    return url.toLowerCase().includes('.m3u8');
+    const lower = url.toLowerCase();
+    return lower.includes('.m3u8') || lower.split('?')[0].endsWith('.txt');
 }
 
 export function isFileUrl(url: string): boolean {
