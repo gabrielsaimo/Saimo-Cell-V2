@@ -466,6 +466,62 @@ function seriesItems(text: string, letter: string): MediaItem[] {
   return result;
 }
 
+/** Animes e doramas publicados com os episódios no próprio arquivo. */
+export async function loadVodCollection(
+  kind: 'animes' | 'doramas',
+  force = false,
+): Promise<MediaItem[]> {
+  const text = await fetchText(
+    `${SAIMO_VOD_BASE}redeflix/links-${kind}.txt`,
+    `vod-redeflix-${kind}.txt`,
+    force,
+  );
+  const result: MediaItem[] = [];
+  let current: MediaItem | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    if (line.startsWith('@')) {
+      const [title = '', year = '', tmdbId = ''] = line.slice(1).split('\t');
+      if (!title.trim()) { current = null; continue; }
+      current = {
+        id: makeVodId('series', `redeflix-${kind}`, title.trim(), year.trim()),
+        name: title.trim(),
+        url: '',
+        category: kind,
+        categoryLabel: kind === 'animes' ? 'Animes' : 'Doramas',
+        type: 'tv',
+        isAdult: false,
+        tmdb: { ...basicTmdb(title.trim(), year.trim()), id: Number(tmdbId) || 0 },
+        episodes: {},
+      };
+      result.push(current);
+      continue;
+    }
+    if (!current?.episodes) continue;
+    const fields = line.split('\t');
+    if (fields.length < 4) continue;
+    const season = String(Number(fields[0]) || 0);
+    const episode = Number(fields[1]) || 0;
+    const label = fields[2] || 'dub';
+    const sources = fields[3].split(',').map(url => url.trim()).filter(Boolean)
+      .map(url => ({ url, label }));
+    if (!sources.length) continue;
+    if (!current.episodes[season]) current.episodes[season] = [];
+    current.episodes[season].push({
+      id: `${current.id}|e|${season}|${episode}`,
+      episode,
+      name: label === 'leg' ? 'Legendado' : 'Dublado',
+      url: sources[0].url,
+      sources,
+    });
+  }
+  return result.filter(item => Object.keys(item.episodes || {}).length > 0).map(item => ({
+    ...item,
+    totalSeasons: Object.keys(item.episodes || {}).length,
+    totalEpisodes: Object.values(item.episodes || {}).reduce((total, episodes) => total + episodes.length, 0),
+  }));
+}
+
 export async function loadVodCategory(
   type: 'movie' | 'series',
   letter: string,
@@ -535,6 +591,14 @@ export async function enrichVodItem(item: MediaItem): Promise<MediaItem> {
 export async function getVodItem(id: string): Promise<MediaItem> {
   const parsed = parseVodId(id);
   if (!parsed) throw new Error('Identificador VOD inválido');
+  if (parsed.letter === 'redeflix-animes' || parsed.letter === 'redeflix-doramas') {
+    const kind = parsed.letter.endsWith('animes') ? 'animes' : 'doramas';
+    const items = await loadVodCollection(kind);
+    const item = items.find(candidate => candidate.name === parsed.title
+      && (candidate.tmdb?.year ?? '') === parsed.year);
+    if (!item) throw new Error('Título não encontrado na coleção atual');
+    return enrichVodItem(item);
+  }
   const items = await loadVodCategory(parsed.type, parsed.letter);
   // Expo Router decodifica os parâmetros da rota. O nome e o ano são a
   // identidade canônica no arquivo da categoria e não dependem de quantas

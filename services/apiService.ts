@@ -2,7 +2,7 @@
 import type { MediaItem } from '../types';
 import {
   clearSaimoSourceCache, getVodItem, loadVodCategory, loadVodIndex,
-  parseVodId, searchVod,
+  loadVodCollection, parseVodId, searchVod,
 } from './saimoSources';
 
 export interface APICategories {
@@ -26,11 +26,17 @@ function categoryParts(categoryId: string): { type: 'movie' | 'series'; letter: 
 
 async function allCategoryIds(): Promise<string[]> {
   const index = await loadVodIndex();
-  return index.entries.flatMap(entry => [`filmes-${entry.letter}`, `series-${entry.letter}`]);
+  return ['animes', 'doramas', ...index.entries.flatMap(entry => [`filmes-${entry.letter}`, `series-${entry.letter}`])];
 }
 
 async function loadCategoryInternal(categoryId: string, force = false): Promise<MediaItem[]> {
   if (!force && CATEGORY_CACHE.has(categoryId)) return CATEGORY_CACHE.get(categoryId)!;
+  if (categoryId === 'animes' || categoryId === 'doramas') {
+    const items = await loadVodCollection(categoryId, force);
+    CATEGORY_CACHE.set(categoryId, items);
+    for (const item of items) ITEM_CACHE.set(item.id, item);
+    return items;
+  }
   const parts = categoryParts(categoryId);
   if (!parts) return [];
   const items = await loadVodCategory(parts.type, parts.letter, force);
