@@ -471,6 +471,7 @@ export async function loadVodCollection(
   kind: 'animes' | 'doramas',
   force = false,
 ): Promise<MediaItem[]> {
+  const index = await loadVodIndex(force);
   const text = await fetchText(
     `${SAIMO_VOD_BASE}redeflix/links-${kind}.txt`,
     `vod-redeflix-${kind}.txt`,
@@ -503,7 +504,9 @@ export async function loadVodCollection(
     const season = String(Number(fields[0]) || 0);
     const episode = Number(fields[1]) || 0;
     const label = fields[2] || 'dub';
-    const sources = fields[3].split(',').map(url => url.trim()).filter(Boolean)
+    const sources = fields[3].split(',')
+      .map(url => vodUrl(url.trim(), index.bases))
+      .filter(Boolean)
       .map(url => ({ url, label }));
     if (!sources.length) continue;
     if (!current.episodes[season]) current.episodes[season] = [];
