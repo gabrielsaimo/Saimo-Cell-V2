@@ -777,7 +777,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                       color={Colors.text}
                     />
                     <Text style={styles.menuItemText} numberOfLines={1}>
-                      Fonte {i + 1} · {hostDe(stream.url)}{stream.drm?.clearKey ? ' · DRM' : ''}
+                      Fonte {i + 1} · {stream.quality || 'Qualidade não informada'} · {hostDe(stream.url)}{stream.drm?.clearKey ? ' · DRM' : ''}
                     </Text>
                   </TouchableOpacity>
                 ))}

@@ -204,6 +204,8 @@ export function parseChannelCatalog(text: string): Channel[] {
       categoria = value;
     } else if (field === 'fonte') {
       streams.push({ url: value });
+    } else if (field === 'qualidade' && streams.length) {
+      streams[streams.length - 1].quality = value;
     } else if ((field === 'referer' || field === 'agente') && streams.length) {
       const current = streams[streams.length - 1];
       current.headers = {
