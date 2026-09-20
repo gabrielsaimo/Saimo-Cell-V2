@@ -147,8 +147,9 @@ async function fetchText(url: string, name: string, force = false): Promise<stri
 }
 
 function streamHeaders(stream: ChannelStream): Record<string, string> | undefined {
-  const headers = { ...(stream.headers ?? {}) };
-  return Object.keys(headers).length ? headers : undefined;
+  // O `Accept` vai sempre: o player não manda nenhum por conta própria, e há
+  // origem que recusa quem não manda — ver a nota em playerStrategies.ts.
+  return { Accept: '*/*', ...(stream.headers ?? {}) };
 }
 
 function channelFrom(name: string, logo: string, category: string, streams: ChannelStream[]): Channel {

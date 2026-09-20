@@ -7,11 +7,24 @@ export interface VideoStrategy {
     label: string;
 }
 
+/*
+ * Todo navegador e todo player manda `Accept`; o ExoPlayer, que é quem toca
+ * aqui embaixo, não manda nenhum — e há servidor que trata a ausência como
+ * cliente suspeito. O EmbedPlayer, que serve os doramas e animes novos,
+ * responde 200 com o corpo "security error" no lugar da playlist: o player
+ * reclama que a resposta não começa com #EXTM3U e a fonte cai.
+ *
+ * Medido cabeçalho a cabeçalho: com o `Accept` a playlist vem, sem ele não
+ * vem, e Referer e Origin não fazem diferença nenhuma. Como nenhuma das
+ * estratégias abaixo o mandava, todas as quatro falhavam nessas fontes.
+ */
+const ACEITA = { Accept: '*/*' };
+
 export const STRATEGIES: VideoStrategy[] = [
-    { label: 'VLC UA',      headers: { 'User-Agent': VLC_UA } },
-    { label: 'No headers',  headers: {} },
-    { label: 'Mobile UA',   headers: { 'User-Agent': MOB_UA } },
-    { label: 'VLC + Range', headers: { 'User-Agent': VLC_UA, 'Icy-MetaData': '0' } },
+    { label: 'VLC UA',      headers: { ...ACEITA, 'User-Agent': VLC_UA } },
+    { label: 'No headers',  headers: { ...ACEITA } },
+    { label: 'Mobile UA',   headers: { ...ACEITA, 'User-Agent': MOB_UA } },
+    { label: 'VLC + Range', headers: { ...ACEITA, 'User-Agent': VLC_UA, 'Icy-MetaData': '0' } },
 ];
 
 export async function resolveUrlViaGet(url: string, timeoutMs = 8000): Promise<string> {
