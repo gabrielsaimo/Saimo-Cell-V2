@@ -332,7 +332,9 @@ export async function loadRemoteChannels(force = false): Promise<Channel[]> {
     const i = ORDEM_CATEGORIAS.indexOf(categoria);
     return i < 0 ? ORDEM_CATEGORIAS.length : i;
   };
-  return [...merged]
+  // O que está desligado no painel sai antes da numeração, para que ela não
+  // pule números de canais que a tela não vai mostrar.
+  return peneirarCanais([...merged])
     .sort((a, b) => posicao(a.category) - posicao(b.category) || a.name.localeCompare(b.name, 'pt-BR'))
     .map((channel, index) => ({ ...channel, channelNumber: index + 1 }));
 }
@@ -418,7 +420,7 @@ function movieItems(text: string, letter: string, bases: string[]): MediaItem[] 
     const fields = line.split('\t');
     const title = fields[0]?.trim();
     if (!title || fields.length < 2) continue;
-    const sources = fields.slice(1).flatMap(field => {
+    const sources = semDesligadas(fields.slice(1).flatMap(field => {
       const equals = field.indexOf('=');
       if (equals <= 0) return [];
       const label = field.slice(0, equals).trim();
@@ -426,7 +428,7 @@ function movieItems(text: string, letter: string, bases: string[]): MediaItem[] 
         .map(value => vodUrl(value.trim(), bases))
         .filter(Boolean)
         .map(url => ({ url, label }));
-    });
+    }));
     if (!sources.length) continue;
     const year = /(?:19|20)\d{2}/.exec(title)?.[0] ?? '';
     result.push({
@@ -507,10 +509,10 @@ export async function loadVodCollection(
     const season = String(Number(fields[0]) || 0);
     const episode = Number(fields[1]) || 0;
     const label = fields[2] || 'dub';
-    const sources = fields[3].split(',')
+    const sources = semDesligadas(fields[3].split(',')
       .map(url => vodUrl(url.trim(), index.bases))
       .filter(Boolean)
-      .map(url => ({ url, label }));
+      .map(url => ({ url, label })));
     if (!sources.length) continue;
     if (!current.episodes[season]) current.episodes[season] = [];
     current.episodes[season].push({
@@ -564,10 +566,10 @@ async function loadSeriesEpisodes(item: MediaItem, letter: string): Promise<Medi
     const season = String(Number(fields[0]) || 0);
     const episode = Number(fields[1]) || 0;
     const label = fields[2] || '';
-    const sources = fields[3].split(',')
+    const sources = semDesligadas(fields[3].split(',')
       .map(value => vodUrl(value.trim(), index.bases))
       .filter(Boolean)
-      .map(url => ({ url, label }));
+      .map(url => ({ url, label })));
     if (!sources.length) continue;
     if (!episodes[season]) episodes[season] = [];
     episodes[season].push({
@@ -587,6 +589,7 @@ async function loadSeriesEpisodes(item: MediaItem, letter: string): Promise<Medi
 // catálogo do Supabase — o nome `getCinemetaData` ficou só para não mexer
 // nos dois lugares que já chamam por ele.
 import { getTMDBData, clearTMDBCache } from './tmdbService';
+import { peneirar as semDesligadas, peneirarCanais } from './fontesDesativadas';
 export { getTMDBData as getCinemetaData } from './tmdbService';
 
 export async function enrichVodItem(item: MediaItem): Promise<MediaItem> {

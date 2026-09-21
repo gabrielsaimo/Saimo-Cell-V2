@@ -3,6 +3,7 @@ import type { Channel, CategoryId } from '../types';
 import { setRemoteChannels } from '../data/channels';
 import { plutoIdDe, registerChannel } from '../services/epgService';
 import { loadRemoteChannels } from '../services/saimoSources';
+import { atualizar as atualizarFontesDesativadas, VALIDADE_MS as FONTES_MS } from '../services/fontesDesativadas';
 
 function sortKey(s: string): string {
     return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -22,6 +23,8 @@ interface ChannelStore {
     setSearchQuery: (query: string) => void;
     setLoading: (loading: boolean) => void;
     fetchChannels: (force?: boolean) => Promise<void>;
+    /** Passa a vigiar os servidores desligados no painel. Devolve como parar. */
+    vigiarFontesDesativadas: () => () => void;
 
     // Seletores
     getFilteredChannels: (includeAdult: boolean, favorites: string[]) => Channel[];
@@ -54,6 +57,9 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
     fetchChannels: async (force = false) => {
         try {
             set({ isLoading: true });
+            // A lista de servidores desligados vem antes do catálogo: chegando
+            // depois, a tela mostraria por um instante canais que não abrem.
+            await atualizarFontesDesativadas();
             // Há uma única lista: catálogo e reservas publicados no Git.
             const data = await loadRemoteChannels(force);
             data.forEach(ch => registerChannel(ch.id, ch.name, plutoIdDe(ch)));
@@ -63,6 +69,29 @@ export const useChannelStore = create<ChannelStore>((set, get) => ({
             console.error('Failed to fetch channels:', error);
             set({ isLoading: false });
         }
+    },
+
+    /*
+     * Um servidor desligado no painel tem que sumir da tela em minutos, que é
+     * o tempo que alguém aguenta um canal quebrado — sem fechar o aplicativo.
+     * A lista é remontada do que já está em disco (`loadRemoteChannels` sem
+     * `force` lê o cache): nada é rebaixado da rede, só o que está morto sai e
+     * o que foi religado volta.
+     */
+    vigiarFontesDesativadas: () => {
+        const relogio = setInterval(() => {
+            void atualizarFontesDesativadas().then(async (mudou) => {
+                if (!mudou) return;
+                try {
+                    const data = await loadRemoteChannels(false);
+                    setRemoteChannels(data);
+                    set({ channels: data });
+                } catch (error) {
+                    console.error('Failed to refilter channels:', error);
+                }
+            });
+        }, FONTES_MS);
+        return () => clearInterval(relogio);
     },
 
     getFilteredChannels: (includeAdult: boolean, favorites: string[]) => {

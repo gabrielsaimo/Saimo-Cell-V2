@@ -39,6 +39,7 @@ export default function HomeScreen() {
     getCategories,
     channels: remoteChannels,
     fetchChannels,
+    vigiarFontesDesativadas,
   } = useChannelStore();
   
   const { favorites } = useFavoritesStore();
@@ -74,6 +75,10 @@ export default function HomeScreen() {
   useEffect(() => {
     if (remoteChannels.length === 0) fetchChannels();
   }, [fetchChannels, remoteChannels.length]);
+
+  // Um servidor desligado no painel some da tela em minutos, sem fechar o
+  // aplicativo; religado, volta sozinho.
+  useEffect(() => vigiarFontesDesativadas(), [vigiarFontesDesativadas]);
 
   useEffect(() => {
     const unsubProg = onEPGProgress((progress, loaded, total) => {
