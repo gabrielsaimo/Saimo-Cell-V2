@@ -146,7 +146,13 @@ export default function DownloadButton({ itemId, onDownload, size = 'normal', st
                 } catch (e: any) {
                     const msg = e.message;
                     if (msg === 'HLS_NOT_SUPPORTED') {
-                        Alert.alert('Download indisponível', 'Conteúdo ao vivo não pode ser baixado.');
+                        // Não é conteúdo ao vivo — era o que esta mensagem
+                        // dizia, num filme comum, só porque a fonte publicada
+                        // primeiro é uma playlist do EmbedPlayer.
+                        Alert.alert(
+                            'Não dá para baixar',
+                            'As fontes deste título são transmissões em pedaços: dá para assistir, não para baixar.',
+                        );
                     } else if (msg !== 'ALREADY_DOWNLOADED' && msg !== 'ALREADY_QUEUED') {
                         Alert.alert('Erro', 'Não foi possível iniciar o download.');
                     }

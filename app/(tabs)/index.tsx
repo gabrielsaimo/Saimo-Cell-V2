@@ -55,8 +55,14 @@ export default function HomeScreen() {
   // Memoize categories to prevent re-creation on every render
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const categories = useMemo(() => getCategories(adultUnlocked), [adultUnlocked, getCategories, remoteChannels]);
+  // `getFilteredChannels` lê a categoria escolhida de dentro da store, então
+  // ela precisa estar nas dependências: sem isso o memo devolvia sempre a
+  // lista da primeira renderização e tocar numa categoria não mudava nada.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allChannels = useMemo(() => getFilteredChannels(adultUnlocked, favorites), [adultUnlocked, favorites, getFilteredChannels, remoteChannels]);
+  const allChannels = useMemo(
+    () => getFilteredChannels(adultUnlocked, favorites),
+    [adultUnlocked, favorites, getFilteredChannels, remoteChannels, selectedCategory],
+  );
 
   // Filtra por busca
   const channels = useMemo(() => {

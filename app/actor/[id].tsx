@@ -15,7 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
-import { getFilmography } from '../../services/apiService';
+import { filmografiaNoAcervo } from '../../services/saimoSources';
+import { creditosDe } from '../../services/tmdbService';
 import type { MediaItem, CastMember } from '../../types';
 import MediaCard from '../../components/MediaCard';
 
@@ -38,36 +39,37 @@ export default function ActorScreen() {
   const [filmography, setFilmography] = useState<MediaItem[]>([]);
 
   useEffect(() => {
+    let vivo = true;
+    /**
+     * O que esta pessoa fez **e que existe no acervo**.
+     *
+     * Antes esta tela chamava um endereço que devolvia lista vazia sempre: o
+     * elenco era clicável e o clique levava a nada. Agora o TMDB diz o que a
+     * pessoa fez, e o arquivo de fichas diz quais desses títulos existem aqui
+     * — o cruzamento é por id, então nome igual não engana.
+     */
     async function load() {
-      if (!name) { setLoading(false); return; }
-
+      const actorId = parseInt(id, 10);
+      setActor({
+        id: actorId || 0,
+        name: (name as string) ?? '',
+        character: '',
+        photo: (photo as string) || null,
+      });
+      if (!actorId) { setLoading(false); return; }
       try {
-        const actorId = parseInt(id, 10);
-        const result = await getFilmography({
-          p_actor_id: actorId || undefined,
-          p_actor: actorId ? undefined : (name as string),
-        });
-        // Deduplicate: by ID first, then by normalized title
-        const seen = new Set<string>();
-        const seenTitles = new Set<string>();
-        const unique = result.items.filter(item => {
-          if (seen.has(item.id)) return false;
-          seen.add(item.id);
-          const title = (item.tmdb?.title || item.name).trim().toLowerCase();
-          if (seenTitles.has(title)) return false;
-          seenTitles.add(title);
-          return true;
-        });
-        setFilmography(unique);
-        setActor({ id: actorId || 0, name: name as string, character: '', photo: (photo as string) || null });
-      } catch {
-        // silently fail — empty filmography
+        const creditos = await creditosDe(actorId);
+        const achados = await filmografiaNoAcervo(creditos);
+        if (vivo) setFilmography(achados);
+      } catch (e) {
+        console.warn('[Ator] filmografia:', e);
       } finally {
-        setLoading(false);
+        if (vivo) setLoading(false);
       }
     }
     load();
-  }, [id, name]);
+    return () => { vivo = false; };
+  }, [id, name, photo]);
 
   const handleBack = () => router.back();
 
@@ -114,11 +116,20 @@ export default function ActorScreen() {
         {/* Filmography */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Filmografia</Text>
-          <View style={styles.grid}>
-            {filmography.map((item) => (
-              <MediaCard key={item.id} item={item} cardWidth={FILM_CARD_WIDTH} />
-            ))}
-          </View>
+          {filmography.length === 0 ? (
+            <>
+              <Text style={styles.vazio}>Nada desta pessoa no acervo.</Text>
+              <Text style={styles.vazioNota}>
+                A filmografia mostra só o que dá para abrir daqui.
+              </Text>
+            </>
+          ) : (
+            <View style={styles.grid}>
+              {filmography.map((item) => (
+                <MediaCard key={item.id} item={item} cardWidth={FILM_CARD_WIDTH} />
+              ))}
+            </View>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -126,6 +137,16 @@ export default function ActorScreen() {
 }
 
 const styles = StyleSheet.create({
+  vazio: {
+    color: Colors.textSecondary,
+    fontSize: Typography.body.fontSize,
+  },
+  vazioNota: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+    marginTop: 4,
+    opacity: 0.7,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,

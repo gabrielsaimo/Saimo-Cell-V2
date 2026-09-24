@@ -13,7 +13,7 @@ import {
   ScrollView,
 } from 'react-native';
 import Video, { DRMType, SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
-import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
+import { useRemoteMediaClient } from 'react-native-google-cast';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -26,6 +26,7 @@ import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
 import { getCurrentProgram, fetchChannelEPG, onEPGUpdate } from '../services/epgService';
 import EPGGuideModal from './EPGGuideModal';
+import CastAction from './CastAction';
 import { configureClearKey } from '../services/clearKeyServer';
 import * as telemetria from '../services/telemetria';
 
@@ -575,9 +576,11 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               <Ionicons name="arrow-back" size={24} color={Colors.text} />
             </TouchableOpacity>
             <View style={{ flex: 1 }} />
-            <View style={styles.castWrap}>
-              <CastButton style={{ width: 24, height: 24, tintColor: Colors.text }} />
-            </View>
+            {/* O botão nativo do Cast é uma view do Android e não disputa o
+                toque com o `Pressable` que cobre o player inteiro: tocar nele
+                só mostrava e escondia a barra. Um `TouchableOpacity` ganha o
+                toque, e a lista de aparelhos abre por baixo dele. */}
+            <CastAction onlyDialog style={styles.iconButton} />
             {totalDeFontes > 1 && (
               <TouchableOpacity
                 style={styles.iconButton}

@@ -16,16 +16,31 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { getItemAPI } from '../../services/apiService';
+import { getTMDBDetails } from '../../services/tmdbService';
 import { useMediaStore } from '../../stores/mediaStore';
 import { downloadManager } from '../../services/downloadManager';
 import DownloadButton from '../../components/DownloadButton';
+import CastAction from '../../components/CastAction';
+import SourceSheet from '../../components/SourceSheet';
+import { primeiraFonteBaixavel } from '../../services/downloadUtils';
 import type { MediaItem, Episode, CastMember } from '../../types';
 
 const { width, height } = Dimensions.get('window');
+
+// Cor da classificação — a mesma régua da tela de filme.
+const getCertColor = (cert?: string) => {
+  if (!cert) return Colors.textSecondary;
+  const c = cert.toUpperCase();
+  if (c === 'L') return '#10B981';
+  if (c === '10') return '#3B82F6';
+  if (c === '12') return '#F59E0B';
+  if (c === '14') return '#F97316';
+  if (c === '16' || c === '18') return '#EF4444';
+  return Colors.textSecondary;
+};
 
 export default function SeriesDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -38,9 +53,9 @@ export default function SeriesDetailScreen() {
   
   const { isFavorite, addFavorite, removeFavorite, setSeriesProgress } = useMediaStore();
   const progress = useMediaStore(s => s.seriesProgress.find(p => p.seriesId === id));
-  const castClient = useRemoteMediaClient();
   const [favorite, setFavorite] = useState(false);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const [sourceSheet, setSourceSheet] = useState<Episode | null>(null);
 
   // Carregar série
   useEffect(() => {
@@ -50,6 +65,15 @@ export default function SeriesDetailScreen() {
         const item = await getItemAPI(id);
         setSeries(item);
         setFavorite(isFavorite(id));
+        // Duração, classificação, elenco e quem assina só existem no
+        // endereço do título: é o que faltava para a tela de série mostrar
+        // o mesmo que a de filme.
+        if (item.tmdb?.id) {
+          getTMDBDetails(item.tmdb.id, true).then(ficha => {
+            if (!Object.keys(ficha).length) return;
+            setSeries(atual => (atual ? { ...atual, tmdb: { ...atual.tmdb!, ...ficha } } : atual));
+          });
+        }
         // Use the store's current state to set initial season
         const initialProgress = useMediaStore.getState().seriesProgress.find(p => p.seriesId === id);
         if (initialProgress) setSelectedSeason(initialProgress.season.toString());
@@ -145,24 +169,20 @@ export default function SeriesDetailScreen() {
     }
   }, [series, progress, handlePlayEpisode]);
 
-  const handleCastEpisode = useCallback((ep: Episode, season: string) => {
-    if (!series) return;
-    if (!castClient) {
-      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Conecte um Chromecast antes de transmitir.');
-      return;
-    }
-    castClient.loadMedia({
-      mediaInfo: {
-        contentUrl: ep.url,
-        metadata: {
-          type: 'tvShow',
-          title: `${series.name} - T${season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ''}`,
-          images: series.tmdb?.poster ? [{ url: series.tmdb.poster }] : [],
-        },
-      },
-      autoplay: true,
-    });
-  }, [series, castClient]);
+  /** O episódio que o botão "Transmitir" envia: o de onde a pessoa parou. */
+  const castPayload = useCallback(() => {
+    if (!series) return null;
+    const ep = progress
+      ? series.episodes?.[progress.season.toString()]?.find(e => e.episode === progress.episode)
+      : episodes[0];
+    const season = progress ? progress.season.toString() : selectedSeason;
+    if (!ep?.url) return null;
+    return {
+      url: ep.url,
+      title: `${series.name} - T${season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ''}`,
+      poster: series.tmdb?.posterHD || series.tmdb?.poster,
+    };
+  }, [series, progress, episodes, selectedSeason]);
 
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({
@@ -254,6 +274,27 @@ export default function SeriesDetailScreen() {
                   </View>
                 )}
               </View>
+              {/* Ano, duração do episódio e classificação: o mesmo que a
+                  tela de filme mostra, e que aqui não aparecia. */}
+              <View style={styles.badges}>
+                {!!tmdb?.year && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{tmdb.year}</Text>
+                  </View>
+                )}
+                {!!tmdb?.runtime && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{tmdb.runtime} min/ep</Text>
+                  </View>
+                )}
+                {!!tmdb?.certification && (
+                  <View style={[styles.badge, { borderColor: getCertColor(tmdb.certification) }]}>
+                    <Text style={[styles.badgeText, { color: getCertColor(tmdb.certification) }]}>
+                      {tmdb.certification}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
         </View>
@@ -295,22 +336,20 @@ export default function SeriesDetailScreen() {
             />
           </TouchableOpacity>
 
-          {castClient && (
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={() => {
-                const ep = progress
-                  ? series.episodes?.[progress.season.toString()]?.find(e => e.episode === progress.episode)
-                  : episodes[0];
-                const s = progress ? progress.season.toString() : selectedSeason;
-                if (ep) handleCastEpisode(ep, s);
-              }}
-            >
-              <MaterialIcons name="cast" size={24} color={Colors.text} />
-            </TouchableOpacity>
-          )}
+          <CastAction resolve={castPayload} style={styles.iconButton} />
         </View>
         
+        {/* Gêneros */}
+        {!!tmdb?.genres?.length && (
+          <View style={styles.genres}>
+            {tmdb.genres.map((genre, i) => (
+              <View key={i} style={styles.genreChip}>
+                <Text style={styles.genreText}>{genre}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Sinopse */}
         {tmdb?.overview && (
           <View style={styles.section}>
@@ -337,6 +376,25 @@ export default function SeriesDetailScreen() {
                 />
               </TouchableOpacity>
             )}
+
+            {/* Quem assina, como na tela de filme. */}
+            <View style={styles.metaInfo}>
+              {!!tmdb.director && (
+                <Text style={styles.metaInfoText}>
+                  <Text style={styles.metaLabel}>Criação: </Text>{tmdb.director}
+                </Text>
+              )}
+              {!!tmdb.writer && (
+                <Text style={styles.metaInfoText}>
+                  <Text style={styles.metaLabel}>Roteiro: </Text>{tmdb.writer}
+                </Text>
+              )}
+              {!!tmdb.productionCompany && (
+                <Text style={styles.metaInfoText}>
+                  <Text style={styles.metaLabel}>Produção: </Text>{tmdb.productionCompany}
+                </Text>
+              )}
+            </View>
           </View>
         )}
 
@@ -411,6 +469,28 @@ export default function SeriesDetailScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+
+      <SourceSheet
+        visible={!!sourceSheet}
+        title={sourceSheet
+          ? `Baixar · T${selectedSeason} E${sourceSheet.episode}`
+          : 'Baixar'}
+        sources={sourceSheet?.sources ?? []}
+        onClose={() => setSourceSheet(null)}
+        onPick={(url) => {
+          const ep = sourceSheet;
+          if (!ep || !series) return;
+          downloadManager
+            .enqueueEpisode(series, ep, parseInt(selectedSeason), url)
+            .catch((e: any) => {
+              if (e?.message === 'HLS_NOT_SUPPORTED') {
+                Alert.alert('Baixar', 'Essa fonte é uma transmissão em pedaços: dá para assistir, não para baixar.');
+              } else if (e?.message !== 'ALREADY_DOWNLOADED' && e?.message !== 'ALREADY_QUEUED') {
+                Alert.alert('Baixar', 'Não foi possível iniciar o download.');
+              }
+            });
+        }}
+      />
         </View>
         
         {/* Lista de Episódios */}
@@ -457,21 +537,34 @@ export default function SeriesDetailScreen() {
                   ) : null;
                 })()}
               </TouchableOpacity>
-              {castClient && (
-                <TouchableOpacity
-                  onPress={() => handleCastEpisode(ep, selectedSeason)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <MaterialIcons name="cast" size={22} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              )}
+              <CastAction
+                size={22}
+                color={Colors.textSecondary}
+                resolve={() => {
+                  if (!series || !ep.url) return null;
+                  return {
+                    url: ep.url,
+                    title: `${series.name} - T${selectedSeason} E${ep.episode}` +
+                      (ep.name ? ` · ${ep.name}` : ''),
+                    poster: series.tmdb?.posterHD || series.tmdb?.poster,
+                  };
+                }}
+              />
               {series && (
                 <DownloadButton
                   itemId={ep.id}
                   size="small"
-                  onDownload={() =>
-                    downloadManager.enqueueEpisode(series, ep, parseInt(selectedSeason))
-                  }
+                  onDownload={async () => {
+                    // Episódio com mais de uma fonte: quem escolhe é quem baixa.
+                    if ((ep.sources?.length ?? 0) > 1) {
+                      setSourceSheet(ep);
+                      return;
+                    }
+                    const fonte = primeiraFonteBaixavel(ep.sources, ep.url);
+                    if (!fonte) throw new Error('HLS_NOT_SUPPORTED');
+                    await downloadManager.enqueueEpisode(
+                      series, ep, parseInt(selectedSeason), fonte);
+                  }}
                 />
               )}
               <TouchableOpacity onPress={() => handlePlayEpisode(ep, selectedSeason)}>
@@ -612,6 +705,53 @@ const styles = StyleSheet.create({
   section: {
     marginTop: Spacing.lg,
     paddingHorizontal: Spacing.lg,
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.xs,
+    marginTop: Spacing.sm,
+  },
+  badge: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.sm,
+  },
+  badgeText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  genres: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    marginTop: Spacing.lg,
+  },
+  genreChip: {
+    backgroundColor: Colors.surface,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+  },
+  genreText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  metaInfo: {
+    marginTop: Spacing.md,
+    gap: 4,
+  },
+  metaInfoText: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+  },
+  metaLabel: {
+    color: Colors.text,
+    fontWeight: '600',
   },
   sectionTitle: {
     color: Colors.text,

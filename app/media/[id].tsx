@@ -15,13 +15,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { getItemAPI } from '../../services/apiService';
+import { getTMDBDetails } from '../../services/tmdbService';
 import { useMediaStore } from '../../stores/mediaStore';
 import { downloadManager } from '../../services/downloadManager';
 import DownloadButton from '../../components/DownloadButton';
+import CastAction from '../../components/CastAction';
+import SourceSheet from '../../components/SourceSheet';
+import { primeiraFonteBaixavel } from '../../services/downloadUtils';
 import type { MediaItem, CastMember } from '../../types';
 
 const { height } = Dimensions.get('window');
@@ -46,11 +49,11 @@ export default function MediaDetailScreen() {
   const [media, setMedia] = useState<MediaItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [overviewExpanded, setOverviewExpanded] = useState(false);
+  const [sourceSheet, setSourceSheet] = useState(false);
 
   const { isFavorite, addFavorite, removeFavorite, addToHistory } = useMediaStore();
   const progress = useMediaStore(s => s.watchHistory.find(h => h.id === id));
   
-  const castClient = useRemoteMediaClient();
   const [favorite, setFavorite] = useState(false);
 
   useEffect(() => {
@@ -64,6 +67,15 @@ export default function MediaDetailScreen() {
         if (isMounted) {
           setMedia(item);
           setFavorite(isFavorite(id));
+        }
+        // A busca do TMDB não traz duração, classificação, elenco nem
+        // direção — só o endereço do título traz. A ficha chega depois e
+        // preenche as seções que abriam vazias.
+        if (item.tmdb?.id) {
+          const ficha = await getTMDBDetails(item.tmdb.id, item.type === 'tv');
+          if (isMounted && Object.keys(ficha).length) {
+            setMedia(atual => (atual ? { ...atual, tmdb: { ...atual.tmdb!, ...ficha } } : atual));
+          }
         }
       } catch (e) {
         console.warn('[MediaDetail] Erro ao carregar item:', id, e);
@@ -107,25 +119,14 @@ export default function MediaDetailScreen() {
     setFavorite(!favorite);
   }, [media, favorite, addFavorite, removeFavorite]);
 
-  const handleCast = useCallback(() => {
-    if (!media?.url) return;
-    if (!castClient) {
-      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Conecte um Chromecast antes de transmitir.');
-      return;
-    }
-    const title = media.tmdb?.title || media.name;
-    castClient.loadMedia({
-      mediaInfo: {
-        contentUrl: media.url,
-        metadata: {
-          type: 'movie',
-          title,
-          images: media.tmdb?.poster ? [{ url: media.tmdb.poster }] : [],
-        },
-      },
-      autoplay: true,
-    });
-  }, [media, castClient]);
+  const castPayload = useCallback(() => {
+    if (!media?.url) return null;
+    return {
+      url: media.url,
+      title: media.tmdb?.title || media.name,
+      poster: media.tmdb?.posterHD || media.tmdb?.poster,
+    };
+  }, [media]);
 
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({
@@ -286,14 +287,22 @@ export default function MediaDetailScreen() {
           {media.url && (
             <DownloadButton
               itemId={media.id}
-              onDownload={() => downloadManager.enqueueMovie(media)}
+              onDownload={async () => {
+                // Com mais de uma fonte, quem escolhe é quem baixa: a
+                // primeira publicada costuma ser a playlist que não baixa.
+                if ((media.sources?.length ?? 0) > 1) {
+                  setSourceSheet(true);
+                  return;
+                }
+                const fonte = primeiraFonteBaixavel(media.sources, media.url);
+                if (!fonte) throw new Error('HLS_NOT_SUPPORTED');
+                await downloadManager.enqueueMovie(media, fonte);
+              }}
             />
           )}
 
           {media.url && (
-            <TouchableOpacity style={styles.iconButton} onPress={handleCast}>
-              <MaterialIcons name="cast" size={24} color={Colors.text} />
-            </TouchableOpacity>
+            <CastAction resolve={castPayload} style={styles.iconButton} />
           )}
         </View>
         
@@ -386,6 +395,22 @@ export default function MediaDetailScreen() {
         {/* Bottom padding */}
         <View style={{ height: insets.bottom + 40 }} />
       </ScrollView>
+
+      <SourceSheet
+        visible={sourceSheet}
+        title={`Baixar · ${media.tmdb?.title || media.name}`}
+        sources={media.sources ?? []}
+        onClose={() => setSourceSheet(false)}
+        onPick={(url) => {
+          downloadManager.enqueueMovie(media, url).catch((e: any) => {
+            if (e?.message === 'HLS_NOT_SUPPORTED') {
+              Alert.alert('Baixar', 'Essa fonte é uma transmissão em pedaços: dá para assistir, não para baixar.');
+            } else if (e?.message !== 'ALREADY_DOWNLOADED' && e?.message !== 'ALREADY_QUEUED') {
+              Alert.alert('Baixar', 'Não foi possível iniciar o download.');
+            }
+          });
+        }}
+      />
     </View>
   );
 }

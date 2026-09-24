@@ -89,6 +89,23 @@ export function isHlsUrl(url: string): boolean {
     return lower.includes('.m3u8') || lower.split('?')[0].endsWith('.txt');
 }
 
+/**
+ * A primeira fonte que dá para baixar, ou nula quando nenhuma dá.
+ *
+ * O downloader baixa arquivo: uma playlist HLS (`.m3u8`, ou o `master.txt` do
+ * EmbedPlayer) teria de ser remontada pedaço a pedaço, e não é o que ele faz.
+ * Quase todo filme com fonte de playlist tem um arquivo direto logo atrás.
+ */
+export function primeiraFonteBaixavel(
+    sources: { url: string }[] | undefined,
+    fallback?: string,
+): string | null {
+    const direta = (sources ?? []).map(s => s.url).find(url => url && !isHlsUrl(url));
+    if (direta) return direta;
+    if (fallback && !isHlsUrl(fallback)) return fallback;
+    return null;
+}
+
 export function isFileUrl(url: string): boolean {
     return url.startsWith('file://');
 }

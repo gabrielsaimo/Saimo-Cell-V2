@@ -9,6 +9,7 @@ import {
     ensureDir,
     getFreeSpace,
     isHlsUrl,
+    primeiraFonteBaixavel,
     getFileSize,
     deleteFileAtPath,
     deleteDirAtPath,
@@ -196,7 +197,16 @@ class DownloadManager {
         }
     }
 
-    async enqueueMovie(media: MediaItem): Promise<void> {
+    /**
+     * Enfileira um filme, opcionalmente por uma fonte escolhida.
+     *
+     * A primeira fonte de quase cinco mil filmes é uma playlist do
+     * EmbedPlayer (`master.txt`), que este downloader não sabe montar — e o
+     * botão recusava o filme inteiro por causa dela, dizendo que era conteúdo
+     * ao vivo. Não é: quatro mil desses filmes têm um arquivo direto logo
+     * atrás, e agora é a tela quem oferece a escolha.
+     */
+    async enqueueMovie(media: MediaItem, sourceUrl?: string): Promise<void> {
         // Fire-and-forget init/permission — don't block user-facing enqueue.
         // _layout.tsx already kicked these off on app mount; this is just a safety net.
         this.init().catch(() => {});
@@ -211,9 +221,10 @@ class DownloadManager {
             throw new Error('ALREADY_QUEUED');
         }
 
-        if (isHlsUrl(media.url)) throw new Error('HLS_NOT_SUPPORTED');
+        const url = sourceUrl || media.url;
+        if (isHlsUrl(url)) throw new Error('HLS_NOT_SUPPORTED');
 
-        const destPath = getDownloadPath('movie', media.id, undefined, media.url);
+        const destPath = getDownloadPath('movie', media.id, undefined, url);
         const task: DownloadTask = {
             id: media.id,
             mediaId: media.id,
@@ -237,7 +248,7 @@ class DownloadManager {
             progress: 0,
             bytesDownloaded: 0,
             bytesTotal: 0,
-            remoteUrl: media.url,
+            remoteUrl: url,
             destPath,
             retries: 0,
             createdAt: Date.now(),
@@ -250,7 +261,12 @@ class DownloadManager {
         this._processQueue();
     }
 
-    async enqueueEpisode(series: MediaItem, episode: Episode, season: number): Promise<void> {
+    async enqueueEpisode(
+        series: MediaItem,
+        episode: Episode,
+        season: number,
+        sourceUrl?: string,
+    ): Promise<void> {
         this.init().catch(() => {});
         ensurePermission().catch(() => {});
 
@@ -264,9 +280,10 @@ class DownloadManager {
             throw new Error('ALREADY_QUEUED');
         }
 
-        if (isHlsUrl(episode.url)) throw new Error('HLS_NOT_SUPPORTED');
+        const url = sourceUrl || episode.url;
+        if (isHlsUrl(url)) throw new Error('HLS_NOT_SUPPORTED');
 
-        const destPath = getDownloadPath('episode', series.id, episode.id, episode.url);
+        const destPath = getDownloadPath('episode', series.id, episode.id, url);
         const task: DownloadTask = {
             id,
             mediaId: series.id,
@@ -294,7 +311,7 @@ class DownloadManager {
             progress: 0,
             bytesDownloaded: 0,
             bytesTotal: 0,
-            remoteUrl: episode.url,
+            remoteUrl: url,
             destPath,
             retries: 0,
             createdAt: Date.now(),
@@ -311,7 +328,10 @@ class DownloadManager {
         const errors: string[] = [];
         for (const ep of episodes) {
             try {
-                await this.enqueueEpisode(series, ep, season);
+                // Baixar a temporada inteira não pode parar para perguntar a
+                // fonte de cada episódio: pega a primeira que dá para baixar.
+                const fonte = primeiraFonteBaixavel(ep.sources, ep.url);
+                await this.enqueueEpisode(series, ep, season, fonte ?? undefined);
             } catch (e: any) {
                 if (e.message !== 'ALREADY_DOWNLOADED' && e.message !== 'ALREADY_QUEUED') {
                     errors.push(ep.name || `E${ep.episode}`);

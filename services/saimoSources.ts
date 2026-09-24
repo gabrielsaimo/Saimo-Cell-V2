@@ -382,7 +382,7 @@ function vodUrl(value: string, bases: string[]): string {
   return `${base}${rest}${rest.includes('.') ? '' : '.mp4'}`;
 }
 
-function makeVodId(type: 'movie' | 'series', letter: string, title: string, year = ''): string {
+export function makeVodId(type: 'movie' | 'series', letter: string, title: string, year = ''): string {
   return `saimo|${type === 'series' ? 's' : 'm'}|${encodeURIComponent(letter)}|${encodeURIComponent(title)}|${encodeURIComponent(year)}`;
 }
 
@@ -658,4 +658,161 @@ export async function clearSaimoSourceCache(): Promise<void> {
   const keys = await AsyncStorage.getAllKeys();
   const sourceKeys = keys.filter(key => key.startsWith(CACHE_PREFIX));
   if (sourceKeys.length) await AsyncStorage.multiRemove(sourceKeys);
+}
+
+/**
+ * As fileiras da tela inicial, prontas para desenhar.
+ *
+ * O acervo tem trinta e quatro mil títulos e nenhuma data de entrada, então o
+ * aparelho não tem como descobrir sozinho o que é novidade — e listar o acervo
+ * por letra inicial, que era o que esta tela fazia, é a ordem do arquivo, não
+ * uma ordem que sirva a quem chega. A conta é feita no repositório
+ * (`gerar_destaques.py`) e chega aqui pronta, no mesmo arquivo que a TV Box, o
+ * Mac e o Windows leem: seis fileiras com o caminho do pôster junto.
+ */
+export interface DestaqueRow {
+  title: string;
+  items: MediaItem[];
+}
+
+export async function loadDestaques(force = false): Promise<DestaqueRow[]> {
+  const text = await fetchText(`${SAIMO_VOD_BASE}destaques.txt`, 'vod-destaques.txt', force);
+  const rows: DestaqueRow[] = [];
+  let current: DestaqueRow | null = null;
+  let base = '';
+
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim() || line.startsWith('#')) continue;
+    if (line.startsWith('capa:')) { base = line.slice(5).trim(); continue; }
+    if (line.startsWith('fila\t')) {
+      current = { title: line.slice(5).trim(), items: [] };
+      rows.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const fields = line.split('\t');
+    if (fields.length < 3) continue;
+    const kind = fields[0]?.[0] ?? 'f';
+    const title = fields[1]?.trim();
+    if (!title) continue;
+    const year = fields[3]?.trim() ?? '';
+    const poster = fields[4]?.trim() ?? '';
+    // Anime e dorama moram nas coleções: a letra deles é o nome da coleção.
+    const letter = kind === 'a' ? 'redeflix-animes'
+      : kind === 'd' ? 'redeflix-doramas'
+      : fields[2]?.trim() ?? '';
+    const type: 'movie' | 'series' = kind === 'f' ? 'movie' : 'series';
+    const collection = kind === 'a' ? 'animes' : kind === 'd' ? 'doramas' : '';
+    current.items.push({
+      id: makeVodId(type, letter, title, year),
+      name: title,
+      url: '',
+      category: collection || `${type === 'series' ? 'series' : 'filmes'}-${letter}`,
+      categoryLabel: current.title,
+      type: type === 'series' ? 'tv' : 'movie',
+      isAdult: false,
+      tmdb: { ...basicTmdb(title, year), poster: poster ? base + poster : '' },
+    });
+  }
+  return rows.filter(row => row.items.length > 0);
+}
+
+/**
+ * As fichas publicadas: id do TMDB, pôster e gêneros de cada título do acervo.
+ *
+ * O mesmo arquivo que o Mac, a TV Box, o Windows e o site leem. Aqui ele serve
+ * a duas coisas: dar o id do TMDB de um título sem busca por nome — que é
+ * lenta e troca filmes de nome igual —, e o caminho inverso, que é o que
+ * transforma a filmografia de um ator numa lista clicável: só entra o que
+ * existe neste acervo.
+ */
+export interface Fichas {
+  /** "f|Nome" ou "s|Nome" -> id do TMDB. */
+  ids: Map<string, number>;
+  /** id do TMDB -> título do acervo. Série entra com o id negativo. */
+  porId: Map<number, string>;
+  /** "f|Nome" ou "s|Nome" -> endereço do pôster. */
+  capas: Map<string, string>;
+}
+
+let fichasEmMemoria: Fichas | null = null;
+
+export async function loadFichas(force = false): Promise<Fichas> {
+  if (fichasEmMemoria && !force) return fichasEmMemoria;
+  const ids = new Map<string, number>();
+  const porId = new Map<number, string>();
+  const capas = new Map<string, string>();
+  let base = '';
+  try {
+    const text = await fetchText(`${SAIMO_VOD_BASE}fichas.txt`, 'vod-fichas.txt', force);
+    // tipo \t título \t id do TMDB \t pôster \t gêneros
+    for (const line of text.split(/\r?\n/)) {
+      if (!line || line.startsWith('#')) continue;
+      if (line.startsWith('capa:')) { base = line.slice(5).trim(); continue; }
+      const fields = line.split('\t');
+      if (fields.length < 5) continue;
+      const key = `${fields[0]}|${fields[1]}`;
+      if (fields[3]) capas.set(key, base + fields[3]);
+      const id = Number(fields[2]);
+      if (Number.isFinite(id) && id > 0) {
+        ids.set(key, id);
+        const marca = fields[0] === 's' ? -id : id;
+        // Um mesmo id pode aparecer duas vezes no acervo (o mesmo filme em
+        // duas grafias); o primeiro basta.
+        if (!porId.has(marca)) porId.set(marca, fields[1]);
+      }
+    }
+  } catch (error) {
+    console.warn('[SaimoVOD] fichas.txt:', error);
+  }
+  fichasEmMemoria = { ids, porId, capas };
+  return fichasEmMemoria;
+}
+
+function semAnoNoFim(titulo: string): string {
+  return titulo.replace(/\s*\(\d{4}\)\s*$/, '').trim();
+}
+
+/** O id do TMDB de um título do acervo, quando o gerador o resolveu. */
+export function idDaFicha(fichas: Fichas, titulo: string, serie: boolean): number | null {
+  const marca = serie ? 's' : 'f';
+  return fichas.ids.get(`${marca}|${titulo}`)
+    ?? fichas.ids.get(`${marca}|${semAnoNoFim(titulo)}`)
+    ?? null;
+}
+
+/**
+ * O que um ator fez **e que existe neste acervo**, já pronto para abrir.
+ *
+ * A filmografia inteira do TMDB não serve de dentro do aplicativo: listar
+ * oitenta títulos dos quais setenta não abrem é uma lista que frustra. O
+ * cruzamento é pelo id do TMDB — nome igual não engana, e refilmagem não vira
+ * o original.
+ */
+export async function filmografiaNoAcervo(
+  creditos: { id: number; serie: boolean }[],
+): Promise<MediaItem[]> {
+  const fichas = await loadFichas();
+  const [filmes, series] = await Promise.all([searchVod('', 'movie'), searchVod('', 'series')]);
+  const porNome = new Map<string, MediaItem>();
+  for (const item of [...filmes, ...series]) {
+    const marca = item.type === 'tv' ? 's' : 'f';
+    porNome.set(`${marca}|${item.name}`, item);
+  }
+
+  const vistos = new Set<string>();
+  const saida: MediaItem[] = [];
+  for (const credito of creditos) {
+    const titulo = fichas.porId.get(credito.serie ? -credito.id : credito.id);
+    if (!titulo) continue;
+    const marca = credito.serie ? 's' : 'f';
+    const item = porNome.get(`${marca}|${titulo}`)
+      ?? porNome.get(`${marca}|${semAnoNoFim(titulo)}`);
+    if (!item || vistos.has(item.id)) continue;
+    vistos.add(item.id);
+    const capa = fichas.capas.get(`${marca}|${titulo}`)
+      ?? fichas.capas.get(`${marca}|${semAnoNoFim(titulo)}`);
+    saida.push(capa ? { ...item, tmdb: { ...item.tmdb!, poster: capa } } : item);
+  }
+  return saida;
 }

@@ -4,7 +4,7 @@ import React, {
 import {
     View, Text, StyleSheet, TouchableOpacity, Pressable,
     StatusBar, BackHandler, Dimensions, ActivityIndicator,
-    Platform, Animated, PanResponder, Modal,
+    Platform, Animated, PanResponder, Modal, ScrollView,
 } from 'react-native';
 import Video, { SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,10 +13,11 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
-import { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
+import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Spacing, BorderRadius } from '../../constants/Colors';
 import { useMediaStore } from '../../stores/mediaStore';
+import CastAction from '../../components/CastAction';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { resolveDownloadId } from '../../services/downloadRouting';
 import { openDownload } from '../../services/playDownload';
@@ -216,22 +217,31 @@ function TrackSheet({
                 <Pressable style={styles.sheetContainer} onPress={() => {}}>
                     <View style={styles.sheetHandle} />
                     <Text style={styles.sheetTitle}>{title}</Text>
-                    {tracks.map((t) => (
-                        <TouchableOpacity
-                            key={t.id}
-                            style={styles.trackRow}
-                            onPress={() => { onSelect(t.id); onClose(); }}
-                        >
-                            <Ionicons
-                                name={t.id === selectedId ? 'radio-button-on' : 'radio-button-off'}
-                                size={18}
-                                color={t.id === selectedId ? Colors.primary : 'rgba(255,255,255,0.5)'}
-                            />
-                            <Text style={[styles.trackLabel, t.id === selectedId && styles.trackLabelActive]}>
-                                {t.label}
-                            </Text>
-                        </TouchableOpacity>
-                    ))}
+                    {/* Um filme com vinte fontes passava do alto da tela e as
+                        últimas ficavam fora de alcance: a folha rola. */}
+                    <ScrollView
+                        style={styles.sheetScroll}
+                        contentContainerStyle={styles.sheetScrollContent}
+                        showsVerticalScrollIndicator
+                        bounces={false}
+                    >
+                        {tracks.map((t) => (
+                            <TouchableOpacity
+                                key={t.id}
+                                style={styles.trackRow}
+                                onPress={() => { onSelect(t.id); onClose(); }}
+                            >
+                                <Ionicons
+                                    name={t.id === selectedId ? 'radio-button-on' : 'radio-button-off'}
+                                    size={18}
+                                    color={t.id === selectedId ? Colors.primary : 'rgba(255,255,255,0.5)'}
+                                />
+                                <Text style={[styles.trackLabel, t.id === selectedId && styles.trackLabelActive]}>
+                                    {t.label}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
                 </Pressable>
             </Pressable>
         </Modal>
@@ -1348,8 +1358,11 @@ export default function MediaPlayerScreen() {
                         </View>
 
                         <View style={styles.topRight}>
+                            {/* O botão nativo do Cast não disputa o toque com
+                                o gesto que cobre o player: quem recebe o toque
+                                é este, e a lista de aparelhos abre por baixo. */}
                             {(!!castUrl || !isOffline) && (
-                                <CastButton style={styles.castBtn} />
+                                <CastAction onlyDialog style={styles.iconBtn} color="#fff" size={22} />
                             )}
                             <TouchableOpacity
                                 style={styles.iconBtn}
@@ -1924,6 +1937,15 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 20,
         padding: Spacing.xl,
         paddingBottom: 32,
+        // Deitado, a tela tem pouca altura: a folha para em 85% dela e o
+        // resto do conteúdo rola por dentro.
+        maxHeight: '85%',
+    },
+    sheetScroll: {
+        flexGrow: 0,
+    },
+    sheetScrollContent: {
+        paddingBottom: Spacing.sm,
     },
     sheetHandle: {
         width: 36,

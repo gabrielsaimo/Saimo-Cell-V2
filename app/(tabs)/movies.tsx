@@ -26,6 +26,7 @@ import {
   clearAllCaches,
   getCatalog,
 } from '../../services/apiService';
+import { loadDestaques, type DestaqueRow } from '../../services/saimoSources';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getTrendingToday, getTrendingWeek } from '../../services/trendingService';
 import type { MediaItem } from '../../types';
@@ -69,6 +70,8 @@ export default function MoviesScreen() {
   const [categories, setCategories] = useState<Map<string, MediaItem[]>>(new Map());
   const [totalLoaded, setTotalLoaded] = useState(0);
   const [bgLoading, setBgLoading] = useState(false);
+
+  const [destaques, setDestaques] = useState<DestaqueRow[]>([]);
 
   const [trendingToday, setTrendingToday] = useState<MediaItem[]>([]);
   const [trendingWeek, setTrendingWeek] = useState<MediaItem[]>([]);
@@ -156,6 +159,16 @@ export default function MoviesScreen() {
   useEffect(() => {
     loadCatalog(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // As fileiras da tela inicial são sete quilobytes e não dependem do
+  // catálogo: chegam antes dele e são a primeira coisa que aparece.
+  useEffect(() => {
+    let active = true;
+    loadDestaques()
+      .then(rows => { if (active) setDestaques(rows); })
+      .catch(e => console.warn('[Movies] destaques:', e));
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -247,6 +260,7 @@ export default function MoviesScreen() {
     setTrendingToday([]);
     setTrendingWeek([]);
     setCatalogResults([]);
+    loadDestaques(true).then(setDestaques).catch(() => {});
     catalogLoadedRef.current = false;
     trendingLoadedRef.current = false;
     loadCatalog(true).finally(() => {
@@ -296,11 +310,22 @@ export default function MoviesScreen() {
   const keyExtractorCategory = useCallback((item: CategoryRowData) => item.id, []);
   const keyExtractorGrid = useCallback((item: MediaItem) => item.id, []);
 
-  const TrendingSection = useMemo(() => {
-    const hasAny = trendingToday.length > 0 || trendingWeek.length > 0;
-    if (!trendingLoading && !hasAny) return null;
+  /**
+   * O topo da tela: as fileiras publicadas primeiro, depois as tendências.
+   *
+   * Antes a tela abria direto nas categorias por letra inicial — que é a
+   * ordem do arquivo do acervo, não uma ordem que sirva a quem chega. As
+   * fileiras vêm prontas do mesmo `destaques.txt` que a TV Box lê, com capa
+   * junto, e as listas por letra continuam logo abaixo para quem navega.
+   */
+  const HomeHeader = useMemo(() => {
+    const hasTrending = trendingToday.length > 0 || trendingWeek.length > 0;
+    if (!destaques.length && !trendingLoading && !hasTrending) return null;
     return (
       <View>
+        {destaques.map(row => (
+          <MediaRow key={row.title} title={row.title} items={row.items} />
+        ))}
         {trendingLoading && trendingToday.length === 0 ? (
           <View style={styles.trendingPlaceholder}>
             <Text style={styles.trendingPlaceholderTitle}>Tendências</Text>
@@ -314,7 +339,7 @@ export default function MoviesScreen() {
         )}
       </View>
     );
-  }, [trendingToday, trendingWeek, trendingLoading]);
+  }, [destaques, trendingToday, trendingWeek, trendingLoading]);
 
   const ListFooter = useMemo(() => {
     if (!bgLoading && !catalogLoading) return null;
@@ -447,7 +472,7 @@ export default function MoviesScreen() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 80 }}
           showsVerticalScrollIndicator={false}
           refreshControl={refreshControl}
-          ListHeaderComponent={TrendingSection}
+          ListHeaderComponent={HomeHeader}
           ListFooterComponent={ListFooter}
         />
       )}
