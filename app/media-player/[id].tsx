@@ -1,6 +1,7 @@
 import React, {
     useEffect, useState, useRef, useCallback, useMemo,
 } from 'react';
+import { buscarPulos, trechoEm, inicioDosCreditos, rotuloTrecho, type Trecho } from '../../services/pulos';
 import {
     View, Text, StyleSheet, TouchableOpacity, Pressable,
     StatusBar, BackHandler, Dimensions, ActivityIndicator,
@@ -397,6 +398,7 @@ export default function MediaPlayerScreen() {
         nextSeason?: string; nextEpisode?: string;
         sources?: string; nextSources?: string;
         offline?: string;
+        tmdb?: string; episode?: string;
     }>();
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -457,6 +459,17 @@ export default function MediaPlayerScreen() {
             : null,
     );
     const [showNextCard, setShowNextCard] = useState(false);
+    // Abertura, recapitulação e créditos marcados no TheIntroDB.
+    const [trechos, setTrechos] = useState<Trecho[]>([]);
+    const [trechoPulado, setTrechoPulado] = useState<Trecho | null>(null);
+    useEffect(() => {
+        const tmdb = Number(routeParams.tmdb || 0);
+        if (!tmdb) return;
+        let vivo = true;
+        buscarPulos(tmdb, Number(params.season || 0), Number(routeParams.episode || 0))
+            .then(t => { if (vivo) setTrechos(t); });
+        return () => { vivo = false; };
+    }, [routeParams.tmdb, params.season, routeParams.episode]);
     const [nextCountdown, setNextCountdown] = useState(NEXT_EP_COUNTDOWN);
     const [nextCardDismissed, setNextCardDismissed] = useState(false);
 
@@ -858,8 +871,10 @@ export default function MediaPlayerScreen() {
             const time = data.currentTime ?? 0;
             setCurrentTime(time);
 
-            // Intelligent early trigger: 30s before end
-            if (duration > 60 && (duration - time) <= 30 && resolvedNextEpisode && !showNextCard && !nextCardDismissed) {
+            // O cartão sobe quando os créditos começam (TheIntroDB); sem marca,
+            // 30 s antes do fim.
+            const creditos = inicioDosCreditos(trechos, duration) ?? (duration - 30);
+            if (duration > 60 && time >= creditos && resolvedNextEpisode && !showNextCard && !nextCardDismissed) {
                 setShowNextCard(true);
             }
         }
@@ -868,7 +883,7 @@ export default function MediaPlayerScreen() {
         // Use seekableDuration as fallback if onLoad didn't set duration
         const sd = data.seekableDuration ?? 0;
         if (sd > 0) setDuration((prev) => (prev > 0 ? prev : sd));
-    }, [isSeeking, duration, resolvedNextEpisode, showNextCard, nextCardDismissed]);
+    }, [isSeeking, duration, resolvedNextEpisode, showNextCard, nextCardDismissed, trechos]);
 
     const onVideoTracks = useCallback((data: any) => {
         const tracks = data?.videoTracks ?? [];
@@ -1312,6 +1327,20 @@ export default function MediaPlayerScreen() {
                 </View>
             )}
 
+            {/* Pular abertura / recapitulação (tempos do TheIntroDB) */}
+            {(() => {
+                const t = trechoEm(trechos, currentTime, duration);
+                if (!t || t === trechoPulado || showNextCard) return null;
+                return (
+                    <TouchableOpacity
+                        style={styles.pularBtn}
+                        onPress={() => { setTrechoPulado(t); seek(t.fim ?? duration); }}>
+                        <Text style={styles.pularBtnText}>{rotuloTrecho[t.tipo]}</Text>
+                        <Ionicons name="play-skip-forward" size={18} color="#000" />
+                    </TouchableOpacity>
+                );
+            })()}
+
             {/* Next episode card */}
             {showNextCard && resolvedNextEpisode && (
                 <NextEpisodeCard
@@ -1569,6 +1598,20 @@ export default function MediaPlayerScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+    pularBtn: {
+        position: 'absolute',
+        right: 24,
+        bottom: 96,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: '#fff',
+        paddingHorizontal: 18,
+        paddingVertical: 12,
+        borderRadius: 10,
+        zIndex: 30,
+    },
+    pularBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
     container: {
         flex: 1,
         backgroundColor: '#000',

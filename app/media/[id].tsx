@@ -105,6 +105,7 @@ export default function MediaDetailScreen() {
         url: encodeURIComponent(media.url),
         sources: encodeURIComponent(JSON.stringify((media.sources ?? []).map(source => source.url))),
         title: media.tmdb?.title || media.name,
+        tmdb: media.tmdb?.id ? String(media.tmdb.id) : '',
       }
     });
   }, [media, router, addToHistory]);

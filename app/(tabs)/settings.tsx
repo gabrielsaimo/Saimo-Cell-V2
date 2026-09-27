@@ -1,3 +1,4 @@
+import Constants from 'expo-constants';
 import React, { useState, useCallback } from 'react';
 import { 
   View, 
@@ -246,7 +247,7 @@ export default function SettingsScreen() {
         {/* App Info */}
         <View style={styles.appInfo}>
           <Text style={styles.appName}>Saimo TV</Text>
-          <Text style={styles.appVersion}>Versão 1.1.4</Text>
+          <Text style={styles.appVersion}>Versão {Constants.expoConfig?.version ?? '—'}</Text>
         </View>
       </ScrollView>
 

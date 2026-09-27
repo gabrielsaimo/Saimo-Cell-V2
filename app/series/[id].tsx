@@ -148,6 +148,8 @@ export default function SeriesDetailScreen() {
         title: `${series.name} - T${season} E${ep.episode}`,
         seriesId: series.id,
         season,
+        episode: String(ep.episode),
+        tmdb: series.tmdb?.id ? String(series.tmdb.id) : '',
         ...(nextEp && {
           nextId: nextEp.id,
           nextUrl: encodeURIComponent(nextEp.url),

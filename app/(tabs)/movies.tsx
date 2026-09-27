@@ -318,11 +318,38 @@ export default function MoviesScreen() {
    * fileiras vêm prontas do mesmo `destaques.txt` que a TV Box lê, com capa
    * junto, e as listas por letra continuam logo abaixo para quem navega.
    */
+  /*
+   * "Continue assistindo": filmes pela metade e séries em andamento, do mais
+   * recente para o mais antigo. O progresso já era salvo — só não aparecia
+   * em lugar nenhum da tela inicial.
+   */
+  const watchHistory = useMediaStore(s => s.watchHistory);
+  const seriesProgress = useMediaStore(s => s.seriesProgress);
+  const continuar = useMemo(() => {
+    const porId = new Map(allItems.map(i => [i.id, i]));
+    const entradas: { item: MediaItem; quando: number }[] = [];
+    for (const h of watchHistory) {
+      const fracao = h.progress && h.duration ? h.progress / h.duration : 0;
+      if (fracao < 0.02 || fracao > 0.95) continue;
+      const item = porId.get(h.id);
+      if (item && item.type !== 'tv') entradas.push({ item, quando: h.watchedAt });
+    }
+    for (const sp of seriesProgress) {
+      const item = porId.get(sp.seriesId);
+      if (item) entradas.push({ item, quando: sp.watchedAt ?? 0 });
+    }
+    const vistos = new Set<string>();
+    return entradas.sort((a, b) => b.quando - a.quando)
+      .filter(e => (vistos.has(e.item.id) ? false : (vistos.add(e.item.id), true)))
+      .slice(0, 20).map(e => e.item);
+  }, [allItems, watchHistory, seriesProgress]);
+
   const HomeHeader = useMemo(() => {
     const hasTrending = trendingToday.length > 0 || trendingWeek.length > 0;
-    if (!destaques.length && !trendingLoading && !hasTrending) return null;
+    if (!destaques.length && !trendingLoading && !hasTrending && !continuar.length) return null;
     return (
       <View>
+        {continuar.length > 0 && <MediaRow title="Continue assistindo" items={continuar} />}
         {destaques.map(row => (
           <MediaRow key={row.title} title={row.title} items={row.items} />
         ))}
@@ -333,13 +360,13 @@ export default function MoviesScreen() {
           </View>
         ) : (
           <>
-            {trendingToday.length > 0 && <MediaRow title="🔥 Tendências de Hoje" items={trendingToday} />}
-            {trendingWeek.length > 0 && <MediaRow title="📅 Tendências da Semana" items={trendingWeek} />}
+            {trendingToday.length > 0 && <MediaRow title="Tendências de hoje" items={trendingToday} />}
+            {trendingWeek.length > 0 && <MediaRow title="Tendências da semana" items={trendingWeek} />}
           </>
         )}
       </View>
     );
-  }, [destaques, trendingToday, trendingWeek, trendingLoading]);
+  }, [destaques, trendingToday, trendingWeek, trendingLoading, continuar]);
 
   const ListFooter = useMemo(() => {
     if (!bgLoading && !catalogLoading) return null;
