@@ -1,5 +1,12 @@
 # Changelog — Saimo TV
 
+## [2.0.0] — 2026-09-27
+
+- Pular abertura e créditos com os tempos do TheIntroDB, e cartão do próximo episódio quando os créditos começam.
+- Fileira "Continuar assistindo" na aba de filmes.
+- Versão em Ajustes lida do próprio app.
+- Títulos sem emoji.
+
 ## [1.4.0] — 2026-09-02
 
 - Corrigida a tela preta na lista de episódios baixados: IDs codificados são reconhecidos após a navegação, com estados visíveis de carregamento e lista vazia.
