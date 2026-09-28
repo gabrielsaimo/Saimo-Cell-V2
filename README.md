@@ -1,7 +1,7 @@
 # Saimo TV — celular (Android)
 
 Canais ao vivo, guia de programação, filmes e séries no celular. Versão atual:
-**2.0.2**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
+**2.0.3**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
 
 O APK (`SaimoCell.apk`) sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest); o
@@ -40,7 +40,7 @@ ANDROID_HOME="/Volumes/SSD 1TB/DEV/AndroidDev/sdk" JAVA_HOME=/opt/homebrew/opt/o
 Sai em `android/app/build/outputs/apk/release/app-release.apk`. O
 `release.sh` do SaimoPlayer copia esse arquivo como `SaimoCell.apk` para o
 release. A versão fica em `app.json` (`version` e `android.versionCode`,
-2.0.2 = 20002) e em `package.json`.
+2.0.3 = 20003) e em `package.json`.
 
 A pasta `android/` é gerada pelo Expo (`npx expo prebuild --clean`) e não vai
 para o Git. O que precisa sobreviver a isso fica em plugins:
