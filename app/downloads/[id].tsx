@@ -274,10 +274,10 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     heroBg: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
     },
     heroOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: 'rgba(0,0,0,0.6)',
     },
     backBtn: {

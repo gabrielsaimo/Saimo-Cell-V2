@@ -38,7 +38,7 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.saimo.tv",
-      "versionCode": 10800,
+      "versionCode": 20002,
       "permissions": [
         "INTERNET",
         "VIBRATE",
@@ -106,10 +106,9 @@
         "expo-build-properties",
         {
           "android": {
-            "compileSdkVersion": 36,
-            "targetSdkVersion": 36,
-            "buildToolsVersion": "36.0.0",
-            "gradleVersion": "8.13",
+            "compileSdkVersion": 37,
+            "targetSdkVersion": 37,
+            "buildToolsVersion": "37.0.0",
             "enableProguardInReleaseBuilds": true,
             "minifyEnabled": true,
             "shrinkResources": true,
@@ -130,7 +129,12 @@
           "isAccessMediaLocationEnabled": true
         }
       ],
-      "expo-font"
+      "expo-font",
+      "./plugins/withSaimoSigning",
+      "./plugins/withSaimoArquiteturas",
+      "expo-image",
+      "expo-splash-screen",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,

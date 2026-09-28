@@ -1,5 +1,10 @@
 # Changelog — Saimo TV
 
+## [Não lançado]
+
+- Expo SDK 57, React Native 0.86 e bibliotecas nas versões mais novas; Android 16 (API 37) como alvo, com tela de ponta a ponta.
+- Assinatura do release e arquiteturas (só ARM) em plugins, para sobreviver ao `expo prebuild --clean`.
+
 ## [2.0.0] — 2026-09-27
 
 - Pular abertura e créditos com os tempos do TheIntroDB, e cartão do próximo episódio quando os créditos começam.

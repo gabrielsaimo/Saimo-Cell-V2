@@ -609,10 +609,7 @@ export default function MediaPlayerScreen() {
             try {
                 await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
                 if (Platform.OS === 'android') {
-                    await NavigationBar.setPositionAsync('absolute');
-                    await NavigationBar.setBackgroundColorAsync('#00000000');
                     await NavigationBar.setVisibilityAsync('hidden');
-                    await NavigationBar.setBehaviorAsync('overlay-swipe');
                 }
                 // Save current brightness so we can restore on exit
                 const { brightness } = await Brightness.getPermissionsAsync()
@@ -1678,7 +1675,7 @@ const styles = StyleSheet.create({
 
     // ── Center controls
     centerControls: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
@@ -1889,7 +1886,7 @@ const styles = StyleSheet.create({
 
     // ── Overlays
     centerOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -1899,7 +1896,7 @@ const styles = StyleSheet.create({
         marginTop: 8,
     },
     errorOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.85)',
@@ -1927,7 +1924,7 @@ const styles = StyleSheet.create({
         fontSize: 14,
     },
     castingOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.9)',
@@ -1946,7 +1943,7 @@ const styles = StyleSheet.create({
 
     // ── Lock
     lockOverlay: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         justifyContent: 'flex-end',
         alignItems: 'flex-start',
         padding: Spacing.xl,

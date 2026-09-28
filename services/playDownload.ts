@@ -8,7 +8,9 @@
 // só via um retângulo preto, sem saber se o problema era o arquivo, o app ou
 // o celular. Aqui o problema é visível antes de abrir o player.
 import { Alert } from 'react-native';
-import type { Router } from 'expo-router';
+import type { useRouter } from 'expo-router';
+
+type Router = ReturnType<typeof useRouter>;
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { downloadManager } from './downloadManager';

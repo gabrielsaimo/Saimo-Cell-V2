@@ -230,7 +230,6 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
         if (Platform.OS === 'android') {
           await NavigationBar.setVisibilityAsync('hidden');
-          await NavigationBar.setBehaviorAsync('overlay-swipe');
         }
       } catch {}
     })();
@@ -854,10 +853,10 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   videoContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
   video: { width: '100%', height: '100%' },
-  loadingOverlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', gap: 12 },
+  loadingOverlay: { ...StyleSheet.absoluteFill, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', gap: 12 },
   retryingText: { color: Colors.textSecondary, fontSize: Typography.body.fontSize, fontWeight: '500' },
   castingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.92)',
@@ -866,7 +865,7 @@ const styles = StyleSheet.create({
   castingTitle: { color: Colors.text, fontSize: Typography.h2.fontSize, fontWeight: '700' },
   castingSubtitle: { color: Colors.textSecondary, fontSize: Typography.body.fontSize },
   errorContainer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.95)',
@@ -960,7 +959,7 @@ const styles = StyleSheet.create({
   osdNoEpg: { color: Colors.textMuted, fontSize: 12 },
 
   menuOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center', alignItems: 'center',
     zIndex: 200,

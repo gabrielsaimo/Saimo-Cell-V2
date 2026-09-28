@@ -604,7 +604,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   heroGradient: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   headerButton: {
     position: 'absolute',
