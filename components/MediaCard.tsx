@@ -27,6 +27,9 @@ interface MediaCardProps {
 
 const { width } = Dimensions.get('window');
 
+/** Capas já achadas nesta sessão: um cartão que volta à tela mostra a certa na hora. */
+const capasConhecidas = new Map<string, string>();
+
 const SIZES = {
   small: { width: width * 0.28, height: width * 0.28 * 1.5 },
   medium: { width: width * 0.35, height: width * 0.35 * 1.5 },
@@ -79,21 +82,28 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
     ? { width: cardWidth, height: Math.round(cardWidth * 1.5) }
     : SIZES[size];
   const tmdb = item.tmdb;
-  const [remotePoster, setRemotePoster] = useState(tmdb?.poster || '');
+  const chaveCapa = `${hasSeries ? 's' : 'm'}:${item.name}`;
+  // A capa achada fica presa ao título a que pertence. A lista reaproveita o
+  // mesmo cartão para outro título ao rolar, e a capa guardada no estado era a
+  // do anterior: aparecia a errada e, quando a busca voltava, a certa.
+  const [achada, setAchada] = useState<{ chave: string; url: string } | null>(null);
+  const remotePoster = tmdb?.poster
+    || (achada?.chave === chaveCapa ? achada.url : '')
+    || capasConhecidas.get(chaveCapa)
+    || '';
 
   // O catálogo compartilhado não guarda imagens. Busca somente os cards que
   // realmente chegaram à tela, como os apps macOS e Android TV fazem.
   useEffect(() => {
+    if (tmdb?.poster || capasConhecidas.has(chaveCapa)) return;
     let active = true;
-    if (tmdb?.poster) {
-      setRemotePoster(tmdb.poster);
-      return () => { active = false; };
-    }
     getCinemetaData(item.name, hasSeries).then(meta => {
-      if (active && meta.poster) setRemotePoster(meta.poster);
+      if (!meta.poster) return;
+      capasConhecidas.set(chaveCapa, meta.poster);
+      if (active) setAchada({ chave: chaveCapa, url: meta.poster });
     });
     return () => { active = false; };
-  }, [item.name, hasSeries, tmdb?.poster]);
+  }, [chaveCapa, item.name, hasSeries, tmdb?.poster]);
 
   const handlePress = useCallback(() => {
     if (hasSeries) {
@@ -185,7 +195,7 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
         contentFit="cover"
         transition={0}
         cachePolicy="memory-disk"
-        recyclingKey={remotePoster || item.id}
+        recyclingKey={item.id}
         priority={Platform.OS === 'android' ? 'high' : undefined}
       />
       
