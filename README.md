@@ -15,6 +15,8 @@ app confere esse release e oferece a atualização sozinho.
 - **Guia de programação** por canal
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com
   ficha, episódios, atores e escolha de fonte
+- **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
+  ajuste de sincronia (`services/legendas.ts`); sem chave nem cadastro
 - **Pular abertura e créditos** com os tempos do
   [TheIntroDB](https://theintrodb.org) (`services/pulos.ts`), e cartão do
   próximo episódio quando os créditos começam
@@ -61,7 +63,7 @@ compileSdk e targetSdk 37 vêm do `expo-build-properties` no `app.json`.
 | `app/(tabs)` | abas: início (canais), filmes, downloads, favoritos, ajustes |
 | `app/media`, `app/series`, `app/actor` | fichas |
 | `app/player`, `app/media-player` | player ao vivo e de filmes/séries |
-| `services/` | catálogo, acervo, guia, TMDB, TheIntroDB, downloads, telemetria |
+| `services/` | catálogo, acervo, guia, TMDB, TheIntroDB, legendas, downloads, telemetria |
 | `components/` | cartões, listas, player, escolha de fonte, atualizador |
 
 Histórico de mudanças em [CHANGELOG.md](CHANGELOG.md).

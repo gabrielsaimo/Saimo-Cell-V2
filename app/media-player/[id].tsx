@@ -2,12 +2,13 @@ import React, {
     useEffect, useState, useRef, useCallback, useMemo,
 } from 'react';
 import { buscarPulos, trechoEm, inicioDosCreditos, rotuloTrecho, type Trecho } from '../../services/pulos';
+import { buscarLegendas, baixarLegenda, idiomaGuardado, guardarIdioma, type LegendaOpcao } from '../../services/legendas';
 import {
     View, Text, StyleSheet, TouchableOpacity, Pressable,
     StatusBar, BackHandler, Dimensions, ActivityIndicator,
-    Platform, Animated, PanResponder, Modal, ScrollView,
+    Platform, Animated, PanResponder, Modal, ScrollView, Alert,
 } from 'react-native';
-import Video, { SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
+import Video, { SelectedTrackType, SelectedVideoTrackType, TextTrackType, VideoRef, type ISO639_1 } from 'react-native-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -202,6 +203,12 @@ function SleepSheet({
 }
 
 /** Audio/Text track selection bottom sheet */
+/** Códigos da folha de legendas: as embutidas usam o índice do player. */
+const LEGENDA_DESLIGAR = -1;
+const LEGENDA_EXT = 1000;
+const LEGENDA_SINCRONIA = -1000;
+const PASSOS_SINCRONIA = [-1, -0.5, 0.5, 1];
+
 function TrackSheet({
     visible, title, tracks, selectedId, onSelect, onClose,
 }: {
@@ -470,6 +477,53 @@ export default function MediaPlayerScreen() {
             .then(t => { if (vivo) setTrechos(t); });
         return () => { vivo = false; };
     }, [routeParams.tmdb, params.season, routeParams.episode]);
+    // Legendas do OpenSubtitles pelo id do TMDB; se a pessoa já escolhera um
+    // idioma antes, a primeira versão dele liga sozinha.
+    const aplicarLegenda = useCallback(async (opcao: LegendaOpcao | null, atraso = 0, guardar = true) => {
+        if (!opcao) {
+            setLegendaExt(null);
+            setLegendaUri(null);
+            setLegendaAtraso(0);
+            if (guardar) guardarIdioma('');
+            retomarEmRef.current = currentTimeRef.current;
+            setVideoKey((k) => k + 1);
+            return;
+        }
+        const arquivo = await baixarLegenda(opcao, atraso);
+        if (!arquivo) {
+            Alert.alert('Legenda', 'Não foi possível baixar esta legenda. Tente outra versão.');
+            return;
+        }
+        setLegendaExt(opcao);
+        setLegendaUri(arquivo);
+        setLegendaAtraso(atraso);
+        setSelectedText(null);
+        if (guardar) guardarIdioma(opcao.idioma);
+        // O player é refeito para abrir o arquivo novo: volta para onde estava.
+        retomarEmRef.current = currentTimeRef.current;
+        setVideoKey((k) => k + 1);
+    }, []);
+
+    useEffect(() => {
+        const tmdb = Number(routeParams.tmdb || 0);
+        setLegendasExt([]);
+        setLegendaExt(null);
+        setLegendaUri(null);
+        setLegendaAtraso(0);
+        if (!tmdb) return;
+        let vivo = true;
+        const temporada = Number(params.season || 0);
+        const serie = !!params.seriesId || temporada > 0;
+        buscarLegendas(tmdb, serie, temporada, Number(routeParams.episode || 0)).then(async (lista) => {
+            if (!vivo) return;
+            setLegendasExt(lista);
+            const idioma = await idiomaGuardado();
+            const primeira = idioma ? lista.find((l) => l.idioma === idioma) : undefined;
+            if (vivo && primeira) void aplicarLegenda(primeira, 0, false);
+        });
+        return () => { vivo = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [routeParams.tmdb, params.season, routeParams.episode, params.seriesId, params.id]);
     const [nextCountdown, setNextCountdown] = useState(NEXT_EP_COUNTDOWN);
     const [nextCardDismissed, setNextCardDismissed] = useState(false);
 
@@ -545,6 +599,15 @@ export default function MediaPlayerScreen() {
     const [videoTracks, setVideoTracks] = useState<Array<{ id: number; label: string }>>([]);
     const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
     const [selectedText, setSelectedText] = useState<number | null>(null);
+    // Legendas do OpenSubtitles (services/legendas.ts), à parte das que vêm no
+    // próprio vídeo. A escolhida vira um arquivo local que o player abre.
+    const [legendasExt, setLegendasExt] = useState<LegendaOpcao[]>([]);
+    const [legendaExt, setLegendaExt] = useState<LegendaOpcao | null>(null);
+    const [legendaUri, setLegendaUri] = useState<string | null>(null);
+    const [legendaAtraso, setLegendaAtraso] = useState(0);
+    /** Onde retomar depois de refazer o player para trocar a legenda. */
+    const retomarEmRef = useRef<number | null>(null);
+    const currentTimeRef = useRef(0);
     const [selectedVideo, setSelectedVideo] = useState<number | null>(null);
     const [showAudioSheet, setShowAudioSheet] = useState(false);
     const [showTextSheet, setShowTextSheet] = useState(false);
@@ -852,7 +915,12 @@ export default function MediaPlayerScreen() {
         }
 
         // Resume progress if exists
-        if (d && d > 0) {
+        if (retomarEmRef.current != null) {
+            // O player foi refeito só para trocar a legenda: volta ao ponto.
+            const ponto = retomarEmRef.current;
+            retomarEmRef.current = null;
+            if (ponto > 1) videoRef.current?.seek(ponto);
+        } else if (d && d > 0) {
             const saved = getProgress(params.id);
             if (saved && saved.progress && saved.progress > 10 && saved.progress < (d - 15)) {
                 videoRef.current?.seek(saved.progress);
@@ -866,6 +934,7 @@ export default function MediaPlayerScreen() {
         // so the thumb doesn't fight back against the drag position.
         if (!isSeeking) {
             const time = data.currentTime ?? 0;
+            currentTimeRef.current = time;
             setCurrentTime(time);
 
             // O cartão sobe quando os créditos começam (TheIntroDB); sem marca,
@@ -959,8 +1028,24 @@ export default function MediaPlayerScreen() {
     }, []);
 
     const handleTextSelect = useCallback((id: number | string) => {
-        setSelectedText(id as number);
-    }, []);
+        const n = Number(id);
+        if (n === LEGENDA_DESLIGAR) {
+            setSelectedText(null);
+            if (legendaExt) void aplicarLegenda(null);
+        } else if (n >= LEGENDA_EXT) {
+            const opcao = legendasExt[n - LEGENDA_EXT];
+            if (opcao) void aplicarLegenda(opcao);
+        } else if (n < LEGENDA_SINCRONIA) {
+            // Passos de sincronia: o id é LEGENDA_SINCRONIA - 1 - posição na lista.
+            const passo = PASSOS_SINCRONIA[LEGENDA_SINCRONIA - 1 - n];
+            if (legendaExt && passo !== undefined) {
+                void aplicarLegenda(legendaExt, Math.round((legendaAtraso + passo) * 100) / 100, false);
+            }
+        } else {
+            if (legendaExt) void aplicarLegenda(null, 0, false);
+            setSelectedText(n);
+        }
+    }, [legendaExt, legendasExt, legendaAtraso, aplicarLegenda]);
 
     const handleVideoSelect = useCallback((id: number | string) => {
         setSelectedVideo(Number(id) < 0 ? null : id as number);
@@ -1253,7 +1338,12 @@ export default function MediaPlayerScreen() {
                     rate={rate}
                     volume={volume}
                     selectedAudioTrack={selectedAudio !== null ? { type: SelectedTrackType.INDEX, value: selectedAudio } : undefined}
-                    selectedTextTrack={selectedText !== null ? { type: SelectedTrackType.INDEX, value: selectedText } : undefined}
+                    textTracks={legendaExt && legendaUri
+                        ? [{ title: legendaExt.rotulo, language: legendaExt.iso as ISO639_1, type: TextTrackType.SUBRIP, uri: legendaUri }]
+                        : undefined}
+                    selectedTextTrack={legendaExt && legendaUri
+                        ? { type: SelectedTrackType.TITLE, value: legendaExt.rotulo }
+                        : selectedText !== null ? { type: SelectedTrackType.INDEX, value: selectedText } : undefined}
                     selectedVideoTrack={selectedVideo !== null
                         ? { type: SelectedVideoTrackType.INDEX, value: selectedVideo }
                         : { type: SelectedVideoTrackType.AUTO }}
@@ -1492,7 +1582,7 @@ export default function MediaPlayerScreen() {
                                         <Text style={styles.toolLabel}>Áudio</Text>
                                     </TouchableOpacity>
                                 )}
-                                {textTracks.length > 0 && (
+                                {(textTracks.length > 0 || legendasExt.length > 0) && (
                                     <TouchableOpacity style={styles.toolBtn} onPress={() => setShowTextSheet(true)}>
                                         <MaterialIcons name="subtitles" size={19} color="#fff" />
                                         <Text style={styles.toolLabel}>Legendas</Text>
@@ -1560,8 +1650,18 @@ export default function MediaPlayerScreen() {
             <TrackSheet
                 visible={showTextSheet}
                 title="Legendas"
-                tracks={textTracks}
-                selectedId={selectedText}
+                tracks={[
+                    { id: LEGENDA_DESLIGAR, label: 'Desligadas' },
+                    ...textTracks,
+                    ...legendasExt.map((l, i) => ({ id: LEGENDA_EXT + i, label: `${l.rotulo}  ·  OpenSubtitles` })),
+                    ...(legendaExt ? PASSOS_SINCRONIA.map((passo, i) => ({
+                        id: LEGENDA_SINCRONIA - 1 - i,
+                        label: `Sincronia: ${passo < 0 ? 'adiantar' : 'atrasar'} ${Math.abs(passo).toString().replace('.', ',')} s`
+                            + (i === 0 ? ` (agora ${legendaAtraso === 0 ? 'original' : `${legendaAtraso > 0 ? '+' : ''}${legendaAtraso.toString().replace('.', ',')} s`})` : ''),
+                    })) : []),
+                ]}
+                selectedId={legendaExt ? LEGENDA_EXT + legendasExt.findIndex((l) => l.id === legendaExt.id)
+                    : selectedText ?? LEGENDA_DESLIGAR}
                 onSelect={handleTextSelect}
                 onClose={() => setShowTextSheet(false)}
             />
