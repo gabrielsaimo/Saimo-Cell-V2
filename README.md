@@ -1,5 +1,9 @@
 # Saimo TV — celular (Android)
 
+<p align="center">
+  Saimo TV: <a href="https://github.com/gabrielsaimo/SaimoTV-Android">TV Box</a> · <b>Celular</b> · <a href="https://github.com/gabrielsaimo/SaimoWin">Windows</a> · <a href="https://github.com/gabrielsaimo/SaimoPlayer">Mac e catálogo</a> · <a href="https://github.com/gabrielsaimo/Saimo-TV">Site</a> · <a href="https://github.com/gabrielsaimo">todos os apps</a>
+</p>
+
 Canais ao vivo, guia de programação, filmes e séries no celular. Versão atual:
 **2.0.4**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
 
