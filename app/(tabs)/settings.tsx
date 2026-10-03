@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { 
   View, 
   Text,
@@ -42,11 +42,28 @@ export default function SettingsScreen() {
 
   const [pinAction, setPinAction] = useState<'change' | 'unlock'>('change');
 
-  const handleChangePIN = useCallback(() => {
-    setPinAction('change');
-    setPinMode('change');
-    setPinModalVisible(true);
-  }, []);
+  // Gatilho secreto: 5 toques no nome do app desbloqueiam/bloqueiam o conteúdo adulto
+  const tapCount = useRef(0);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSecretTap = useCallback(() => {
+    tapCount.current += 1;
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    tapTimer.current = setTimeout(() => { tapCount.current = 0; }, 1500);
+
+    if (tapCount.current >= 5) {
+      tapCount.current = 0;
+      if (tapTimer.current) clearTimeout(tapTimer.current);
+      if (adultUnlocked) {
+        lockAdult();
+        Alert.alert('🔒 Bloqueado', 'Conteúdo adulto bloqueado.');
+      } else {
+        setPinAction('unlock');
+        setPinMode('verify');
+        setPinModalVisible(true);
+      }
+    }
+  }, [adultUnlocked, lockAdult]);
 
   const handleUnlockAdult = useCallback(() => {
     setPinAction('unlock');
@@ -175,43 +192,6 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* Controle Parental */}
-        <Text style={styles.sectionTitle}>Controle Parental</Text>
-        <View style={styles.section}>
-          <View style={styles.settingRow}>
-            <View style={styles.settingInfo}>
-              <Ionicons
-                name={adultUnlocked ? 'lock-open-outline' : 'lock-closed-outline'}
-                size={22}
-                color={adultUnlocked ? Colors.accent : Colors.primary}
-              />
-              <Text style={styles.settingLabel}>Conteúdo adulto</Text>
-            </View>
-            <Switch
-              value={adultUnlocked}
-              onValueChange={(value) => {
-                if (value) {
-                  handleUnlockAdult();
-                } else {
-                  handleLockAdult();
-                }
-              }}
-              trackColor={{ false: Colors.border, true: Colors.accent }}
-              thumbColor={Colors.text}
-            />
-          </View>
-
-          <View style={styles.divider} />
-
-          <TouchableOpacity style={styles.settingRow} onPress={handleChangePIN}>
-            <View style={styles.settingInfo}>
-              <Ionicons name="key-outline" size={22} color={Colors.primary} />
-              <Text style={styles.settingLabel}>Alterar PIN</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-
         {/* Dados */}
         <Text style={styles.sectionTitle}>Dados</Text>
         <View style={styles.section}>
@@ -246,7 +226,9 @@ export default function SettingsScreen() {
 
         {/* App Info */}
         <View style={styles.appInfo}>
-          <Text style={styles.appName}>Saimo TV</Text>
+          <TouchableOpacity onPress={handleSecretTap} activeOpacity={1}>
+            <Text style={styles.appName}>Saimo TV</Text>
+          </TouchableOpacity>
           <Text style={styles.appVersion}>Versão {Constants.expoConfig?.version ?? '—'}</Text>
         </View>
       </ScrollView>
