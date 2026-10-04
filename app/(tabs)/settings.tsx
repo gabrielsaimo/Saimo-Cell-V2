@@ -229,7 +229,7 @@ export default function SettingsScreen() {
           <TouchableOpacity onPress={handleSecretTap} activeOpacity={1}>
             <Text style={styles.appName}>Saimo TV</Text>
           </TouchableOpacity>
-          <Text style={styles.appVersion}>Versão {Constants.expoConfig?.version ?? '—'}</Text>
+          <Text style={styles.appVersion}>Versão 2.0.6</Text>
         </View>
       </ScrollView>
 
