@@ -20,7 +20,13 @@ export default function PlayerScreen() {
 
   const channel = useMemo<Channel | null>(() => {
     // A lista Git já foi registrada aqui com DRM, headers e fontes reserva.
-    const remote = channels.find(ch => ch.id === params.id);
+    // Fuzzy match for events and deep links:
+    const slugLimpo = (params.id || '').replace(/remote-|-/g, '').toLowerCase();
+    let remote = channels.find(ch => ch.id.replace(/remote-|-/g, '').toLowerCase() === slugLimpo);
+    if (!remote) {
+      remote = channels.find(ch => ch.name.replace(/[\s-]/g, '').toLowerCase() === slugLimpo);
+    }
+    
     if (remote) return remote;
     // Last resort: params only (no DRM info)
     if (params.url && params.name && params.category) {
