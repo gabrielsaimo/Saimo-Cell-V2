@@ -6,9 +6,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Image,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -98,7 +98,7 @@ export default function EventsScreen() {
         <View style={styles.cardHeader}>
           <View style={styles.leagueInfo}>
             {item.league.image ? (
-              <Image source={{ uri: item.league.image }} style={styles.leagueIcon} />
+              <Image source={{ uri: item.league.image }} style={styles.leagueIcon} contentFit="contain" />
             ) : (
               <Ionicons name="trophy-outline" size={16} color={Colors.textSecondary} />
             )}
@@ -113,7 +113,7 @@ export default function EventsScreen() {
         <View style={styles.teamsContainer}>
           <View style={styles.team}>
             {item.teams.home.image ? (
-              <Image source={{ uri: item.teams.home.image }} style={styles.teamLogo} />
+              <Image source={{ uri: item.teams.home.image }} style={styles.teamLogo} contentFit="contain" />
             ) : (
               <View style={[styles.teamLogo, styles.placeholderLogo]}>
                 <Ionicons name="shield-outline" size={24} color={Colors.textSecondary} />
@@ -128,7 +128,7 @@ export default function EventsScreen() {
 
           <View style={styles.team}>
             {item.teams.away.image ? (
-              <Image source={{ uri: item.teams.away.image }} style={styles.teamLogo} />
+              <Image source={{ uri: item.teams.away.image }} style={styles.teamLogo} contentFit="contain" />
             ) : (
               <View style={[styles.teamLogo, styles.placeholderLogo]}>
                 <Ionicons name="shield-outline" size={24} color={Colors.textSecondary} />
@@ -273,7 +273,6 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     marginBottom: Spacing.sm,
-    resizeMode: 'contain',
   },
   placeholderLogo: {
     justifyContent: 'center',
