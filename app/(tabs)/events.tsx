@@ -50,8 +50,25 @@ export default function EventsScreen() {
       const response = await fetch('https://embedtv.cc/api/events');
       if (!response.ok) throw new Error('Network response was not ok');
       const data: EventItem[] = await response.json();
+      
+      const now = new Date().getTime();
+      const validEvents = data.filter(event => {
+        let fimMs = 0;
+        let inicioMs = 0;
+        if (event.time_end) fimMs = new Date(event.time_end).getTime();
+        if (event.time_start) inicioMs = new Date(event.time_start).getTime();
+        
+        // Fallback 2 hours
+        if (!fimMs && inicioMs) {
+            fimMs = inicioMs + (2 * 60 * 60 * 1000);
+        }
+        
+        // Se ainda não terminou, mantém (ou se der NaN por erro de parse)
+        return isNaN(fimMs) || fimMs > now;
+      });
+
       // Sort by time_start if needed, assuming the API returns them ordered
-      setEvents(data);
+      setEvents(validEvents);
     } catch (error) {
       console.error('Failed to fetch events:', error);
     } finally {
