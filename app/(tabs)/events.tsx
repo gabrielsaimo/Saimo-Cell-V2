@@ -72,15 +72,18 @@ export default function EventsScreen() {
   const handlePlay = (event: EventItem) => {
     // Determine player URL
     let playerUrl = '';
+    let channelSlug = event.slug; // default to event slug if no player
     if (event.players && event.players.length > 0) {
       playerUrl = event.players[0];
+      const parts = playerUrl.split('/');
+      channelSlug = parts[parts.length - 1].toLowerCase();
     }
 
-    // Redirect to Player, passing slug as id
+    // Redirect to Player, passing the extracted channel slug as id
     router.push({
       pathname: '/player/[id]',
       params: {
-        id: event.slug,
+        id: channelSlug,
         url: playerUrl,
         name: event.title,
         category: event.league.name,
