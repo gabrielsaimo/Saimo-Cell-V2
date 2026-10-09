@@ -1,9 +1,10 @@
 # Changelog — Saimo TV
 
-## [Não lançado]
+## [2.1.1] — 2026-10-09
 
 - Expo SDK 57, React Native 0.86 e bibliotecas nas versões mais novas; Android 16 (API 37) como alvo, com tela de ponta a ponta.
 - Assinatura do release e arquiteturas (só ARM) em plugins, para sobreviver ao `expo prebuild --clean`.
+- Corrigido o app fechando ao abrir em aparelho de pouca memória (`OutOfMemoryError` no Android 9 com heap de 48 MB): o guia de programação (~16 MB) e o da Pluto são baixados para o disco e lidos em blocos, sem passar inteiros pela memória.
 
 ## [2.0.0] — 2026-09-27
 

@@ -31,7 +31,6 @@ const appChannelNames = new Map<string, string>();
 const plutoIds = new Map<string, string>();
 /** Canais em que a Pluto é a fonte principal; nos outros ela é só reserva. */
 const plutoPrincipais = new Set<string>();
-let plutoXml: { at: number; xml: string } | null = null;
 let needsReload = true;
 let hasRegisteredChannels = false;
 let initCalled = false;
@@ -137,52 +136,57 @@ export function registerEpgAlias(_c: string, _e: string): void {}
 
 // ─── Disk Cache ───────────────────────────────────────────────────────────────
 
-function getCacheFile(): FSFile {
+// O guia nunca passa inteiro pela memória: o XML (~16 MB) vira uma string de
+// ~32 MB no Java ao sair do fetch e derruba, com OutOfMemoryError, aparelho de
+// heap pequeno (Android 9 com 48 MB). Ele vai direto para o disco e é lido em
+// blocos; da memória só passam os programas dos canais que o app tem.
+
+function getCacheDir(): Directory {
     const dir = new Directory(Paths.document, 'epg_xmltv');
     if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-    return new FSFile(dir, 'epg-br.xml');
+    return dir;
 }
 
-function readCachedSync(): string | null {
+function getCacheFile(): FSFile {
+    return new FSFile(getCacheDir(), 'epg-br.xml');
+}
+
+/** Arquivo do cache se existe e é mais novo que `ttl`; a idade é a data de gravação. */
+function cachedFile(file: FSFile, ttl: number): FSFile | null {
     try {
-        const file = getCacheFile();
         if (!file.exists) {
-            console.log('[EPG] Cache file does not exist');
+            console.log('[EPG] Cache file does not exist:', file.name);
             return null;
         }
         if (file.size < 1000) {
             console.log('[EPG] Cache file too small:', file.size);
             return null;
         }
-        const raw = file.textSync();
-        const m = raw.match(/<!--fetchTime:(\d+)-->/);
-        if (!m) {
-            console.log('[EPG] Cache file missing timestamp');
-            return null;
-        }
-        const fetchTime = parseInt(m[1]);
-        const age = Date.now() - fetchTime;
-        if (age >= CACHE_TTL_MS) {
+        const age = Date.now() - (file.lastModified ?? 0);
+        if (age >= ttl) {
             console.log(`[EPG] Cache expired (${Math.floor(age / 3600000)}h old)`);
             return null;
         }
         console.log(`[EPG] Cache valid (${Math.floor(age / 3600000)}h old)`);
-        return raw.replace(/<!--fetchTime:\d+-->[\r\n]?/, '');
+        return file;
     } catch (e) {
         console.error('[EPG] Cache read error:', e);
         return null;
     }
 }
 
-function writeCachedSync(xml: string): void {
-    try {
-        const file = getCacheFile();
-        file.create({ overwrite: true });
-        file.write(`<!--fetchTime:${Date.now()}-->\n${xml}`);
-        console.log('[EPG] Cache written');
-    } catch (e) {
-        console.error('[EPG] Cache write error:', e);
-    }
+/**
+ * Baixa direto para o disco: o download nativo copia a resposta para o arquivo
+ * sem montar o texto na memória. Grava num `.part` e só troca o cache quando o
+ * download termina, para uma queda no meio não deixar um guia cortado.
+ */
+async function downloadToCache(url: string, name: string): Promise<FSFile> {
+    const dir = getCacheDir();
+    const part = new FSFile(dir, `${name}.part`);
+    if (part.exists) part.delete();
+    await FSFile.downloadFileAsync(url, part, { idempotent: true });
+    await part.move(new FSFile(dir, name), { overwrite: true });
+    return new FSFile(dir, name);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -217,31 +221,122 @@ function notifyProgress(progress: number, loaded: number, total: number): void {
 
 const yieldNow = () => new Promise<void>(r => setTimeout(r, 0));
 
-async function extractChannels(xml: string): Promise<void> {
-    nameIndex.clear();
-    let cursor = 0;
-    let count = 0;
-    let batch = 0;
+const CHUNK_BYTES = 256 * 1024;
+/** Um elemento maior que isto está quebrado; é descartado para o resto não crescer sem fim. */
+const MAX_REST = 1024 * 1024;
 
-    while (true) {
-        const tagStart = xml.indexOf('<channel id="', cursor);
-        if (tagStart < 0) break;
-        const idEnd = xml.indexOf('"', tagStart + 13);
-        if (idEnd < 0) break;
-        const closeTag = xml.indexOf('</channel>', idEnd);
-        if (closeTag < 0) break;
-
-        const id = xml.slice(tagStart + 13, idEnd);
-        const inner = xml.slice(idEnd + 1, closeTag);
-        const dn = inner.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
-        if (dn) {
-            nameIndex.set(norm(dec(dn[1]).trim()), id);
-            count++;
+/**
+ * UTF-8 para texto. O Hermes nem sempre traz TextDecoder; sem ele a conversão
+ * é feita aqui. `end` é onde o último caractere inteiro do bloco termina.
+ */
+function decodeUtf8(b: Uint8Array, end: number): string {
+    const parts: string[] = [];
+    const units: number[] = [];
+    let i = 0;
+    while (i < end) {
+        let c = b[i++];
+        if (c >= 0x80) {
+            if (c >= 0xf0) c = ((c & 7) << 18) | ((b[i++] & 63) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
+            else if (c >= 0xe0) c = ((c & 15) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
+            else if (c >= 0xc0) c = ((c & 31) << 6) | (b[i++] & 63);
+            else c = 0xfffd;
+            if (c > 0xffff) {
+                c -= 0x10000;
+                units.push(0xd800 | (c >> 10));
+                c = 0xdc00 | (c & 0x3ff);
+            }
         }
-        cursor = closeTag + 10;
-
-        if (++batch >= 1000) { batch = 0; await yieldNow(); }
+        units.push(c);
+        if (units.length >= 8192) {
+            parts.push(String.fromCharCode.apply(null, units));
+            units.length = 0;
+        }
     }
+    if (units.length) parts.push(String.fromCharCode.apply(null, units));
+    return parts.join('');
+}
+
+/** Até onde o bloco tem caracteres inteiros; o que sobra é o começo de um caractere cortado. */
+function utf8Boundary(b: Uint8Array): number {
+    const n = b.length;
+    for (let back = 1; back <= 3 && back <= n; back++) {
+        const c = b[n - back];
+        if ((c & 0xc0) === 0x80) continue;
+        const len = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+        return len > back ? n - back : n;
+    }
+    return n;
+}
+
+/**
+ * Lê o arquivo em blocos e entrega o texto a `consume`, que devolve até onde
+ * processou: o resto (um elemento cortado no fim do bloco) volta no começo do
+ * próximo. Devolver -1 encerra a leitura. `frac` é quanto do arquivo já foi lido.
+ */
+async function scanFile(file: FSFile, consume: (buf: string, frac: number) => number): Promise<void> {
+    const handle = file.open();
+    try {
+        const total = handle.size ?? file.size;
+        const decoder = typeof TextDecoder === 'function' ? new TextDecoder('utf-8') : null;
+        let read = 0;
+        let pending: Uint8Array | null = null;
+        let rest = '';
+        while (true) {
+            const chunk = handle.readBytes(CHUNK_BYTES);
+            const last = chunk.length === 0;
+            read += chunk.length;
+            let text: string;
+            if (decoder) {
+                text = decoder.decode(chunk, { stream: !last });
+            } else {
+                let bytes: Uint8Array = chunk;
+                if (pending) {
+                    bytes = new Uint8Array(pending.length + chunk.length);
+                    bytes.set(pending);
+                    bytes.set(chunk, pending.length);
+                }
+                const cut = last ? bytes.length : utf8Boundary(bytes);
+                text = decodeUtf8(bytes, cut);
+                pending = cut < bytes.length ? bytes.slice(cut) : null;
+            }
+            const buf = rest + text;
+            const used = consume(buf, total ? read / total : 0);
+            if (used < 0 || last) break;
+            rest = buf.length - used > MAX_REST ? '' : buf.slice(used);
+            await yieldNow();
+        }
+    } finally {
+        handle.close();
+    }
+}
+
+async function extractChannels(file: FSFile): Promise<void> {
+    nameIndex.clear();
+    let count = 0;
+
+    await scanFile(file, buf => {
+        let cursor = 0;
+        while (true) {
+            const tagStart = buf.indexOf('<channel id="', cursor);
+            if (tagStart < 0) {
+                // Os canais vêm todos antes dos programas: chegou no primeiro, acabou.
+                if (buf.indexOf('<programme ', cursor) >= 0) return -1;
+                return Math.max(cursor, buf.length - 16);
+            }
+            const closeTag = buf.indexOf('</channel>', tagStart);
+            if (closeTag < 0) return tagStart;
+            const idEnd = buf.indexOf('"', tagStart + 13);
+
+            const id = buf.slice(tagStart + 13, idEnd);
+            const inner = buf.slice(idEnd + 1, closeTag);
+            const dn = inner.match(/<display-name[^>]*>([^<]+)<\/display-name>/);
+            if (dn) {
+                nameIndex.set(norm(dec(dn[1]).trim()), id);
+                count++;
+            }
+            cursor = closeTag + 10;
+        }
+    });
     console.log(`[EPG] Extracted ${count} channels from XML, index size: ${nameIndex.size}`);
 }
 
@@ -267,7 +362,7 @@ function matchChannels(): Set<string> {
     return matched;
 }
 
-async function extractProgrammes(xml: string, targetIds: Set<string>, pluto = false): Promise<void> {
+async function extractProgrammes(file: FSFile, targetIds: Set<string>, pluto = false): Promise<void> {
     if (!pluto) channelPrograms.clear();
     if (targetIds.size === 0) {
         console.log('[EPG] No target channels to extract programmes');
@@ -280,77 +375,72 @@ async function extractProgrammes(xml: string, targetIds: Set<string>, pluto = fa
     const win0 = now - 3600000;
     const win1 = now + 7 * 86400000;
 
-    const xmlLen = xml.length;
-    let cursor = 0;
-    let batch = 0;
     let processed = 0;
     let kept = 0;
 
-    while (true) {
-        const tagStart = xml.indexOf('<programme ', cursor);
-        if (tagStart < 0) break;
-        const tagEnd = xml.indexOf('>', tagStart + 11);
-        if (tagEnd < 0) break;
-        const closeTag = xml.indexOf('</programme>', tagEnd);
-        if (closeTag < 0) break;
+    await scanFile(file, (xml, frac) => {
+        let cursor = 0;
+        while (true) {
+            const tagStart = xml.indexOf('<programme ', cursor);
+            if (tagStart < 0) return Math.max(cursor, xml.length - 11);
+            const tagEnd = xml.indexOf('>', tagStart + 11);
+            if (tagEnd < 0) return tagStart;
+            const closeTag = xml.indexOf('</programme>', tagEnd);
+            if (closeTag < 0) return tagStart;
 
-        const attrs = xml.slice(tagStart + 11, tagEnd);
-        const chIdx = attrs.indexOf('channel="');
-        if (chIdx >= 0) {
-            const chEnd = attrs.indexOf('"', chIdx + 9);
-            const channelId = chEnd > 0 ? attrs.slice(chIdx + 9, chEnd) : '';
+            const attrs = xml.slice(tagStart + 11, tagEnd);
+            const chIdx = attrs.indexOf('channel="');
+            if (chIdx >= 0) {
+                const chEnd = attrs.indexOf('"', chIdx + 9);
+                const channelId = chEnd > 0 ? attrs.slice(chIdx + 9, chEnd) : '';
 
-            if (channelId && targetIds.has(channelId)) {
-                const sIdx = attrs.indexOf('start="');
-                const stIdx = attrs.indexOf('stop="');
-                if (sIdx >= 0 && stIdx >= 0) {
-                    const sEnd = attrs.indexOf('"', sIdx + 7);
-                    const stEnd = attrs.indexOf('"', stIdx + 6);
-                    const startTime = parseXmltvDate(attrs.slice(sIdx + 7, sEnd));
-                    const endTime = parseXmltvDate(attrs.slice(stIdx + 6, stEnd));
+                if (channelId && targetIds.has(channelId)) {
+                    const sIdx = attrs.indexOf('start="');
+                    const stIdx = attrs.indexOf('stop="');
+                    if (sIdx >= 0 && stIdx >= 0) {
+                        const sEnd = attrs.indexOf('"', sIdx + 7);
+                        const stEnd = attrs.indexOf('"', stIdx + 6);
+                        const startTime = parseXmltvDate(attrs.slice(sIdx + 7, sEnd));
+                        const endTime = parseXmltvDate(attrs.slice(stIdx + 6, stEnd));
 
-                    if (!isNaN(startTime.getTime()) && endTime.getTime() >= win0 && startTime.getTime() <= win1) {
-                        const inner = xml.slice(tagEnd + 1, closeTag);
-                        const tM = inner.match(/<title[^>]*>([^<]+)<\/title>/);
-                        if (tM) {
-                            const title = dec(tM[1]).trim();
-                            if (title) {
-                                const dM = inner.match(/<desc[^>]*>([\s\S]*?)<\/desc>/);
-                                const cM = inner.match(/<category[^>]*>([^<]+)<\/category>/);
-                                const iM = inner.match(/<icon[^>]*src="([^"]+)"/);
-                                channelPrograms.get(channelId)?.push({
-                                    id: `${channelId}-${startTime.getTime()}`,
-                                    title,
-                                    description: dM ? dec(dM[1]).trim() : '',
-                                    category: cM ? dec(cM[1]).trim() : '',
-                                    startTime,
-                                    endTime,
-                                    ...(iM ? { thumbnail: dec(iM[1]) } : {}),
-                                });
-                                kept++;
+                        if (!isNaN(startTime.getTime()) && endTime.getTime() >= win0 && startTime.getTime() <= win1) {
+                            const inner = xml.slice(tagEnd + 1, closeTag);
+                            const tM = inner.match(/<title[^>]*>([^<]+)<\/title>/);
+                            if (tM) {
+                                const title = dec(tM[1]).trim();
+                                if (title) {
+                                    const dM = inner.match(/<desc[^>]*>([\s\S]*?)<\/desc>/);
+                                    const cM = inner.match(/<category[^>]*>([^<]+)<\/category>/);
+                                    const iM = inner.match(/<icon[^>]*src="([^"]+)"/);
+                                    channelPrograms.get(channelId)?.push({
+                                        id: `${channelId}-${startTime.getTime()}`,
+                                        title,
+                                        description: dM ? dec(dM[1]).trim() : '',
+                                        category: cM ? dec(cM[1]).trim() : '',
+                                        startTime,
+                                        endTime,
+                                        ...(iM ? { thumbnail: dec(iM[1]) } : {}),
+                                    });
+                                    kept++;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        cursor = closeTag + 12;
-        processed++;
-
-        if (++batch >= 4000) {
-            batch = 0;
-            if (pluto) { await yieldNow(); continue; }
-            const pct = 50 + Math.floor((cursor / xmlLen) * 49);
-            notifyProgress(Math.min(99, pct), channelPrograms.size, targetIds.size);
-            await yieldNow();
+            cursor = closeTag + 12;
+            processed++;
+            if (!pluto && processed % 4000 === 0) {
+                const pct = 50 + Math.floor(frac * 49);
+                notifyProgress(Math.min(99, pct), channelPrograms.size, targetIds.size);
+            }
         }
-    }
+    });
 
     channelPrograms.forEach(p => p.sort((a, b) => a.startTime.getTime() - b.startTime.getTime()));
     console.log(`[EPG] Scanned ${processed} programmes, kept ${kept} for ${channelPrograms.size} channels`);
 }
-
 // ─── Reserva: guiadetv.com ─────────────────────────────────────────────────────
 //
 // O feed XMLTV não lista Sony Movies (nem mais cinco canais do catálogo:
@@ -438,20 +528,17 @@ async function fillGuiaDeTvGaps(): Promise<void> {
 }
 
 /**
- * Guia da Pluto para os canais da Pluto. O documento fica na memória por seis
+ * Guia da Pluto para os canais da Pluto. O documento fica no disco por seis
  * horas: registrar um canal recarrega o guia, e baixar de novo a cada recarga
  * seria desperdício.
  */
 async function fillPluto(): Promise<void> {
     if (plutoIds.size === 0) return;
     try {
-        if (!plutoXml || Date.now() - plutoXml.at > PLUTO_TTL_MS) {
-            const res = await fetch(PLUTO_URL, { cache: 'no-cache' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            plutoXml = { at: Date.now(), xml: await res.text() };
-        }
+        const file = cachedFile(new FSFile(getCacheDir(), 'pluto-br.xml'), PLUTO_TTL_MS)
+            ?? await downloadToCache(PLUTO_URL, 'pluto-br.xml');
         const ids = new Set(plutoIds.values());
-        await extractProgrammes(plutoXml.xml, ids, true);
+        await extractProgrammes(file, ids, true);
         let preenchidos = 0;
         for (const [appId, id] of plutoIds) {
             if (!channelPrograms.get(id)?.length) continue;
@@ -469,7 +556,7 @@ async function fillPluto(): Promise<void> {
 
 // ─── Load ─────────────────────────────────────────────────────────────────────
 
-async function doLoadSync(xml: string): Promise<void> {
+async function doLoadSync(xml: FSFile): Promise<void> {
     console.log('[EPG] Starting async load...');
     const channelsAtStart = appChannelNames.size;
     needsReload = false;
@@ -521,7 +608,7 @@ function loadFromCacheOrFetch(): void {
     setState('loading');
     loadError = null;
 
-    const cached = readCachedSync();
+    const cached = cachedFile(getCacheFile(), CACHE_TTL_MS);
     const promise = cached
         ? doLoadSync(cached)
         : fetchAndLoadAsync(false);
@@ -550,13 +637,9 @@ async function fetchAndLoadAsync(silent: boolean = false): Promise<void> {
     }
 
     try {
-        const res = await fetch(EPG_XML_URL, { cache: 'no-cache' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const xml = await downloadToCache(EPG_XML_URL, 'epg-br.xml');
+        console.log(`[EPG] Fetched ${xml.size} bytes`);
 
-        const xml = await res.text();
-        console.log(`[EPG] Fetched ${xml.length} bytes`);
-
-        writeCachedSync(xml);
         if (silent) {
             // Parse silently — keep current loaded state, only emit update at end
             await doLoadSilent(xml);
@@ -577,7 +660,7 @@ async function fetchAndLoadAsync(silent: boolean = false): Promise<void> {
     }
 }
 
-async function doLoadSilent(xml: string): Promise<void> {
+async function doLoadSilent(xml: FSFile): Promise<void> {
     // Parse without flipping state — useful for background refresh of already-loaded data
     try {
         await extractChannels(xml);

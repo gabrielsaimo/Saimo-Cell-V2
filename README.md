@@ -5,7 +5,7 @@
 </p>
 
 Canais ao vivo, guia de programação, filmes e séries no celular. Versão atual:
-**2.0.4**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
+**2.1.1**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
 
 O APK (`SaimoCell.apk`) sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest); o
@@ -16,7 +16,10 @@ app confere esse release e oferece a atualização sozinho.
 - **TV ao vivo** com a mesma lista dos outros apps (`catalogo.txt` do
   SaimoPlayer), várias fontes por canal, ClearKey e troca automática de fonte;
   ao vivo não tem pausa
-- **Guia de programação** por canal
+- **Guia de programação** por canal (XMLTV do iptv-epg.org e da Pluto TV).
+  O XML vai direto para o disco e é lido em blocos de 256 KB
+  (`services/epgService.ts`); só os programas dos canais do app ficam na
+  memória, então o guia de ~16 MB não derruba aparelho de heap pequeno
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com
   ficha, episódios, atores e escolha de fonte
 - **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
