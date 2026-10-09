@@ -24,10 +24,15 @@ app confere esse release e oferece a atualização sozinho.
 - **Pular abertura e créditos** com os tempos do
   [TheIntroDB](https://theintrodb.org) (`services/pulos.ts`), e cartão do
   próximo episódio quando os créditos começam
-- **Continuar assistindo** na aba de filmes
+- **Continuar assistindo** na aba de filmes, e um banner do primeiro destaque
+  no topo: com trailer direto no catálogo (MP4/HLS) ele toca sem som depois
+  de 5 s, e a ficha abre se o trailer tocou e a aba ficou na frente por mais
+  15 s
+- **Janela flutuante** (picture-in-picture) no player ao vivo, no Android
 - **Downloads** para ver sem internet, com notificação de andamento
 - **Chromecast**, favoritos e busca
-- Versão mostrada em Ajustes lida do próprio app (`app.json`)
+- Versão mostrada em Ajustes e usada pelo atualizador lida do próprio app
+  (`app.json`)
 
 ## Rodar
 
