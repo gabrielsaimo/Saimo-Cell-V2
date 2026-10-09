@@ -47,7 +47,10 @@ export default function Updater() {
   const scaleValue = useRef(new Animated.Value(0.9)).current;
   const opacityValue = useRef(new Animated.Value(0)).current;
 
-  const currentVersion = "2.0.6" || '1.4.0';
+  // A versão vem do próprio app (app.json embutido no build). Escrita à mão
+  // aqui ela ficou para trás (2.0.6 no app 2.1.0) e o aviso de atualização
+  // aparecia sem parar, oferecendo a versão que a pessoa já tinha.
+  const currentVersion = Constants.expoConfig?.version ?? Constants.nativeApplicationVersion ?? '0.0.0';
 
   const checkUpdate = useCallback(async () => {
     try {

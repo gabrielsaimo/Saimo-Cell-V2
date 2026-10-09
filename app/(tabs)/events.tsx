@@ -185,7 +185,6 @@ export default function EventsScreen() {
           data={events}
           renderItem={renderItem}
           keyExtractor={(item) => item.id.toString()}
-          estimatedItemSize={200}
           contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 80 }]}
           refreshControl={
             <RefreshControl
