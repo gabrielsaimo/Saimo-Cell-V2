@@ -733,7 +733,8 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                 >
                   <Ionicons name="swap-horizontal" size={20} color={Colors.text} />
                   <Text style={styles.menuItemText}>
-                    Fonte · {Math.min(sourceIndex + 1, totalDeFontes)} de {totalDeFontes}
+                    {activeChannel.streams?.[sourceIndex]?.name
+                      ?? `Fonte · ${Math.min(sourceIndex + 1, totalDeFontes)} de ${totalDeFontes}`}
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -788,7 +789,10 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                       color={Colors.text}
                     />
                     <Text style={styles.menuItemText} numberOfLines={1}>
-                      Fonte {i + 1} · {stream.quality || 'Qualidade não informada'} · {hostDe(stream.url)}{stream.drm?.clearKey ? ' · DRM' : ''}
+                      {/* Como no TV Box: o nome da fonte (a temporada, nos canais 24h) ou o número, a qualidade quando informada e o servidor. */}
+                      {[stream.name ?? `Fonte ${i + 1}`,
+                        stream.quality && stream.quality !== 'Qualidade não informada' ? stream.quality : null,
+                        hostDe(stream.url)].filter(Boolean).join(' · ')}{stream.drm?.clearKey ? ' · DRM' : ''}
                     </Text>
                   </TouchableOpacity>
                 ))}

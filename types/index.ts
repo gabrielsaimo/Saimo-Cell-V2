@@ -10,6 +10,8 @@ export interface ChannelDRM {
 export interface ChannelStream {
     url: string;
     quality?: string;
+    /** O que diferencia a fonte das outras do canal ("Temporada 3"), quando o catálogo sabe. */
+    name?: string;
     headers?: Record<string, string>;
     drm?: ChannelDRM;
 }
