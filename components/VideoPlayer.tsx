@@ -580,6 +580,13 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                 só mostrava e escondia a barra. Um `TouchableOpacity` ganha o
                 toque, e a lista de aparelhos abre por baixo dele. */}
             <CastAction onlyDialog style={styles.iconButton} />
+            <TouchableOpacity
+              style={styles.iconButton}
+              accessibilityLabel="Picture-in-picture"
+              onPress={() => Platform.OS === 'android' && videoRef.current?.enterPictureInPicture()}
+            >
+              <MaterialIcons name="picture-in-picture" size={22} color={Colors.text} />
+            </TouchableOpacity>
             {totalDeFontes > 1 && (
               <TouchableOpacity
                 style={styles.iconButton}

@@ -287,7 +287,7 @@ export function getTMDBDetails(id: number, series: boolean): Promise<Partial<TMD
   if (existente) return existente;
 
   const promessa = (async (): Promise<Partial<TMDBData>> => {
-    const extras = series ? 'credits,content_ratings' : 'credits,release_dates';
+    const extras = series ? 'credits,content_ratings,videos' : 'credits,release_dates,videos';
     const url = `${TMDB_BASE}/${tipo}/${id}?api_key=${TMDB_API_KEY}` +
       `&language=pt-BR&append_to_response=${extras}`;
     try {
@@ -325,6 +325,11 @@ export function getTMDBDetails(id: number, series: boolean): Promise<Partial<TMD
       // sobrescrever com nada seria apagar o que já estava na tela.
       const ficha: Partial<TMDBData> = {};
       if (json?.tagline) ficha.tagline = json.tagline;
+      // Só aceita trailer oficial do YouTube como metadado. Players nativos
+      // usam URLs diretas publicadas no catálogo; não tentamos tocar páginas HTML.
+      const video = (json?.videos?.results ?? []).find((v: any) =>
+        v?.site === 'YouTube' && v?.type === 'Trailer' && v?.official !== false && v?.key);
+      if (video?.key) ficha.trailer = `https://www.youtube.com/watch?v=${video.key}`;
       if (json?.overview) ficha.overview = json.overview;
       if (json?.status) ficha.status = json.status;
       if (duracao) ficha.runtime = duracao;

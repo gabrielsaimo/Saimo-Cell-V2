@@ -229,7 +229,9 @@ export default function SettingsScreen() {
           <TouchableOpacity onPress={handleSecretTap} activeOpacity={1}>
             <Text style={styles.appName}>Saimo TV</Text>
           </TouchableOpacity>
-          <Text style={styles.appVersion}>Versão 2.0.6</Text>
+          <Text style={styles.appVersion}>Versão 2.1.0</Text>
+          <Text style={styles.appCredits}>Desenvolvimento: Gabriel Saimo
+Desenvolvimento: Arthur Roberto (thxsp)</Text>
         </View>
       </ScrollView>
 
@@ -337,5 +339,11 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
     marginTop: Spacing.xs,
+  },
+  appCredits: {
+    color: Colors.textSecondary,
+    fontSize: Typography.caption.fontSize,
+    lineHeight: 18,
+    marginTop: Spacing.sm,
   },
 });

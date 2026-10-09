@@ -119,6 +119,8 @@ export interface TMDBData {
     backdrop?: string;
     backdropHD?: string;
     logo?: string;
+    /** URL direta MP4/HLS do trailer, quando publicada no catálogo. */
+    trailer?: string;
     cast: CastMember[];
     // Novos campos
     recommendations?: MediaItem[];

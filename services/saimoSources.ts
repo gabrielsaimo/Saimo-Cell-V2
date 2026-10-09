@@ -697,6 +697,7 @@ export async function loadDestaques(force = false): Promise<DestaqueRow[]> {
     if (!title) continue;
     const year = fields[3]?.trim() ?? '';
     const poster = fields[4]?.trim() ?? '';
+    const trailer = fields[5]?.trim() ?? '';
     // Anime e dorama moram nas coleções: a letra deles é o nome da coleção.
     const letter = kind === 'a' ? 'redeflix-animes'
       : kind === 'd' ? 'redeflix-doramas'
@@ -711,7 +712,7 @@ export async function loadDestaques(force = false): Promise<DestaqueRow[]> {
       categoryLabel: current.title,
       type: type === 'series' ? 'tv' : 'movie',
       isAdult: false,
-      tmdb: { ...basicTmdb(title, year), poster: poster ? base + poster : '' },
+      tmdb: { ...basicTmdb(title, year), poster: poster ? base + poster : '', trailer: trailer || undefined },
     });
   }
   return rows.filter(row => row.items.length > 0);

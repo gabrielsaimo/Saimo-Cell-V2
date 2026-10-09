@@ -9,9 +9,12 @@ import {
   ActivityIndicator,
   RefreshControl,
   InteractionManager,
+  ImageBackground,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import Video from 'react-native-video';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
@@ -62,8 +65,41 @@ const MAX_GRID_RESULTS = 200;
 
 type CategoryRowData = { id: string; name: string; items: MediaItem[] };
 
+function TrailerBanner({ item, onOpen }: { item?: MediaItem; onOpen: () => void }) {
+  const [playing, setPlaying] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const trailer = item?.tmdb?.trailer || '';
+  const direct = /\.(mp4|m3u8)(\?|$)/i.test(trailer) ? trailer : '';
+  useEffect(() => {
+    setPlaying(false); setFailed(false);
+    if (!item) return;
+    const start = setTimeout(() => { if (direct) setPlaying(true); }, 5000);
+    const open = setTimeout(onOpen, 20000);
+    return () => { clearTimeout(start); clearTimeout(open); };
+  }, [item?.id, direct, onOpen]);
+  if (!item) return null;
+  const title = item.tmdb?.title || item.name;
+  const image = item.tmdb?.backdrop || item.tmdb?.poster || '';
+  return (
+    <TouchableOpacity style={styles.trailerBanner} activeOpacity={0.9} onPress={onOpen}>
+      {playing && direct && !failed ? (
+        <Video source={{ uri: direct }} style={StyleSheet.absoluteFill} resizeMode="cover" muted repeat
+          onError={() => { setFailed(true); setPlaying(false); }} />
+      ) : <ImageBackground source={{ uri: image }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
+      <View style={styles.trailerShade} />
+      <View style={styles.trailerContent}>
+        <Text style={styles.trailerEyebrow}>{playing ? 'TRAILER' : 'DESTAQUE'}</Text>
+        <Text style={styles.trailerTitle} numberOfLines={2}>{title}</Text>
+        <Text style={styles.trailerHint}>{direct ? 'Trailer automático em 5s · abrir em 20s' : 'Toque para ver os detalhes'}</Text>
+        <View style={styles.trailerButton}><Ionicons name="play" size={16} color="#fff" /><Text style={styles.trailerButtonText}>Assistir</Text></View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 export default function MoviesScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -344,11 +380,18 @@ export default function MoviesScreen() {
       .slice(0, 20).map(e => e.item);
   }, [allItems, watchHistory, seriesProgress]);
 
+  const bannerItem = destaques[0]?.items[0];
+  const openBannerItem = useCallback(() => {
+    if (!bannerItem) return;
+    if (bannerItem.type === 'tv') router.push({ pathname: '/series/[id]' as any, params: { id: bannerItem.id } });
+    else router.push({ pathname: '/media/[id]', params: { id: bannerItem.id } });
+  }, [bannerItem, router]);
   const HomeHeader = useMemo(() => {
     const hasTrending = trendingToday.length > 0 || trendingWeek.length > 0;
     if (!destaques.length && !trendingLoading && !hasTrending && !continuar.length) return null;
     return (
       <View>
+        <TrailerBanner item={bannerItem} onOpen={openBannerItem} />
         {continuar.length > 0 && <MediaRow title="Continue assistindo" items={continuar} />}
         {destaques.map(row => (
           <MediaRow key={row.title} title={row.title} items={row.items} />
@@ -366,7 +409,7 @@ export default function MoviesScreen() {
         )}
       </View>
     );
-  }, [destaques, trendingToday, trendingWeek, trendingLoading, continuar]);
+  }, [destaques, bannerItem, openBannerItem, trendingToday, trendingWeek, trendingLoading, continuar]);
 
   const ListFooter = useMemo(() => {
     if (!bgLoading && !catalogLoading) return null;
@@ -509,6 +552,14 @@ export default function MoviesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  trailerBanner: { height: 230, marginHorizontal: Spacing.lg, marginBottom: Spacing.lg, borderRadius: BorderRadius.lg, overflow: 'hidden', backgroundColor: Colors.surface },
+  trailerShade: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.46)' },
+  trailerContent: { flex: 1, justifyContent: 'flex-end', padding: Spacing.lg },
+  trailerEyebrow: { color: Colors.primary, fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
+  trailerTitle: { color: '#fff', fontSize: 25, fontWeight: '800', marginTop: 4 },
+  trailerHint: { color: '#ddd', fontSize: 12, marginTop: 5 },
+  trailerButton: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', backgroundColor: Colors.primary, borderRadius: BorderRadius.full, paddingHorizontal: 14, paddingVertical: 8, marginTop: 10 },
+  trailerButtonText: { color: '#fff', fontWeight: '700' },
   center: { justifyContent: 'center', alignItems: 'center' },
   loadingText: { color: Colors.textSecondary, marginTop: Spacing.md, fontSize: Typography.body.fontSize },
   header: {
