@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
@@ -17,6 +18,52 @@ import * as IntentLauncher from 'expo-intent-launcher';
 import { Colors } from '../constants/Colors'; // Assuming Colors is present, else we can fall back
 
 const RELEASE_URL = 'https://api.github.com/repos/gabrielsaimo/SaimoPlayer/releases/latest';
+/// Sem a API: a página do último release redireciona para a tag (".../tag/v2.1.1")
+/// e o APK tem endereço fixo. A API aceita só 60 consultas por hora por IP, e na
+/// rede do celular muita gente sai pelo mesmo IP da operadora: estourado o
+/// limite, a API responde 403 e o aviso de atualização nunca aparecia.
+const PAGINA_ULTIMA = 'https://github.com/gabrielsaimo/SaimoPlayer/releases/latest';
+const APK_DIRETO = 'https://github.com/gabrielsaimo/SaimoPlayer/releases/latest/download/SaimoCell.apk';
+/// Com o app aberto, olha de novo ao voltar para a frente, no máximo a cada 6 h.
+const INTERVALO_MS = 6 * 60 * 60 * 1000;
+
+const VERSAO = /^v?(\d+\.\d+(?:\.\d+)?)$/i;
+
+/** O último release: pela API (com as notas) ou, se ela falhar, pelo redirecionamento. */
+async function ultimoRelease(): Promise<{ version: string; url: string; notas: string } | null> {
+  try {
+    const response = await fetch(RELEASE_URL, {
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'SaimoCell-Updater',
+      },
+    });
+    if (response.ok) {
+      const release = await response.json();
+      const version = VERSAO.exec(String(release.tag_name || ''))?.[1] ?? '';
+      // O mesmo release contém TV, macOS e celular. Nunca instalar SaimoTV.apk
+      // por engano: aceitamos somente os nomes explícitos do app móvel.
+      const asset = Array.isArray(release.assets)
+        ? release.assets.find((item: any) =>
+            /^(?:saimo[-_ ]?cell|saimotv[-_ ]cell).*\.apk$/i.test(String(item.name || '')))
+        : null;
+      if (version && asset?.browser_download_url) {
+        return { version, url: asset.browser_download_url, notas: textoDasNotas(String(release.body || '')) };
+      }
+    }
+  } catch {
+    // Cai no caminho sem API, logo abaixo.
+  }
+  try {
+    const pagina = await fetch(PAGINA_ULTIMA, { method: 'HEAD', cache: 'no-store' });
+    const tag = /\/tag\/([^/?#]+)/.exec(pagina.url || '')?.[1] ?? '';
+    const version = VERSAO.exec(decodeURIComponent(tag))?.[1] ?? '';
+    return version ? { version, url: APK_DIRETO, notas: '' } : null;
+  } catch {
+    return null;
+  }
+}
 
 /** As notas vêm em Markdown do GitHub; aqui viram texto simples. */
 function textoDasNotas(md: string): string {
@@ -52,30 +99,18 @@ export default function Updater() {
   // aparecia sem parar, oferecendo a versão que a pessoa já tinha.
   const currentVersion = Constants.expoConfig?.version ?? Constants.nativeApplicationVersion ?? '0.0.0';
 
+  const ultimaChecagem = useRef(0);
+
   const checkUpdate = useCallback(async () => {
     try {
-      const response = await fetch(RELEASE_URL, {
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'SaimoCell-Updater',
-        },
-      });
-      if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
-      const release = await response.json();
-      const tag = String(release.tag_name || '');
-      const version = /^v?\d+\.\d+(?:\.\d+)?$/i.test(tag) ? tag.replace(/^v/i, '') : '';
-      // O mesmo release contém TV, macOS e celular. Nunca instalar SaimoTV.apk
-      // por engano: aceitamos somente os nomes explícitos do app móvel.
-      const asset = Array.isArray(release.assets)
-        ? release.assets.find((item: any) =>
-            /^(?:saimo[-_ ]?cell|saimotv[-_ ]cell).*\.apk$/i.test(String(item.name || '')))
-        : null;
-      if (!version || !asset?.browser_download_url) return;
+      ultimaChecagem.current = Date.now();
+      const release = await ultimoRelease();
+      if (!release) return;
+      const { version } = release;
       const data: UpdateInfo = {
         version,
-        url: asset.browser_download_url,
-        releaseNotes: textoDasNotas(String(release.body || '')),
+        url: release.url,
+        releaseNotes: release.notas,
         mandatory: false,
       };
 
@@ -101,6 +136,14 @@ export default function Updater() {
   }, [currentVersion]);
 
   useEffect(() => { checkUpdate(); }, [checkUpdate]);
+
+  // Quem deixa o app aberto dias seguidos também fica sabendo da versão nova.
+  useEffect(() => {
+    const assinatura = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active' && !visible && Date.now() - ultimaChecagem.current > INTERVALO_MS) checkUpdate();
+    });
+    return () => assinatura.remove();
+  }, [checkUpdate, visible]);
 
   const compareVersions = (v1: string, v2: string) => {
     const v1Parts = v1.split('.').map(Number);
