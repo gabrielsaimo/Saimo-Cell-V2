@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,186 +6,232 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  AppState,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
+import { useChannelStore } from '../../stores/channelStore';
+import { acabou, aoVivo, buscarJogos, type Jogo } from '../../services/eventos';
+import { plural } from '../../utils/plural';
 
-interface Team {
-  name: string;
-  image: string;
+const HORA = 3_600_000;
+/** O placar anda: com a aba aberta e o app na frente, busca de novo a cada minuto. */
+const INTERVALO = 60_000;
+
+type Linha = { tipo: 'grupo'; titulo: string } | { tipo: 'jogo'; jogo: Jogo };
+
+const GRUPOS = ['Ao vivo agora', 'Começa em breve', 'Hoje mais tarde', 'Amanhã', 'Próximos dias'];
+
+function diaDe(ms: number): number {
+  const d = new Date(ms);
+  return Math.round(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000);
 }
 
-interface League {
-  name: string;
-  image: string;
+const hora = (ms: number) =>
+  new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+/** "21:30", "amanhã 16:00" ou "sáb 16:00". */
+function quando(inicio: number, agora: number): string {
+  const d = diaDe(inicio) - diaDe(agora);
+  if (d <= 0) return hora(inicio);
+  if (d === 1) return `amanhã ${hora(inicio)}`;
+  const semana = new Date(inicio).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+  return `${semana} ${hora(inicio)}`;
 }
 
-interface EventItem {
-  id: number;
-  slug: string;
-  title: string;
-  league: League;
-  teams: {
-    home: Team;
-    away: Team;
-  };
-  time_start: string;
-  time_end: string;
-  players: string[];
+function grupoDe(j: Jogo, agora: number): number {
+  if (aoVivo(j, agora)) return 0;
+  if (j.inicio - agora <= 2 * HORA) return 1;
+  const d = diaDe(j.inicio) - diaDe(agora);
+  if (d <= 0) return 2;
+  return d === 1 ? 3 : 4;
 }
+
+function Escudo({ uri }: { uri: string }) {
+  return uri ? (
+    <Image source={{ uri }} style={styles.teamLogo} contentFit="contain" recyclingKey={uri} />
+  ) : (
+    <View style={[styles.teamLogo, styles.placeholderLogo]}>
+      <Ionicons name="shield-outline" size={24} color={Colors.textSecondary} />
+    </View>
+  );
+}
+
+const CartaoJogo = React.memo(function CartaoJogo({ jogo, agora }: { jogo: Jogo; agora: number }) {
+  const vivo = aoVivo(jogo, agora);
+  const abrir = () => router.push({ pathname: '/player/[id]', params: { id: jogo.canal.id } });
+
+  return (
+    <TouchableOpacity
+      style={[styles.card, vivo && styles.cardVivo]}
+      onPress={abrir}
+      activeOpacity={0.8}
+      accessibilityLabel={`${jogo.casa} x ${jogo.fora}, no canal ${jogo.canal.name}`}
+    >
+      <View style={styles.cardHeader}>
+        <View style={styles.leagueInfo}>
+          {jogo.ligaLogo ? (
+            <Image source={{ uri: jogo.ligaLogo }} style={styles.leagueIcon} contentFit="contain" />
+          ) : (
+            <Ionicons name="trophy-outline" size={16} color={Colors.textSecondary} />
+          )}
+          <Text style={styles.leagueName} numberOfLines={1}>{jogo.liga}</Text>
+        </View>
+        {vivo ? (
+          <View style={styles.liveBadge}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveText}>{['AO VIVO', jogo.tempo].filter(Boolean).join('  ')}</Text>
+          </View>
+        ) : (
+          <View style={styles.timeBadge}>
+            <Ionicons name="time-outline" size={14} color={Colors.textSecondary} style={{ marginRight: 4 }} />
+            <Text style={styles.timeText}>{quando(jogo.inicio, agora)}</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.teamsContainer}>
+        <View style={styles.team}>
+          <Escudo uri={jogo.casaLogo} />
+          <Text style={styles.teamName} numberOfLines={2}>{jogo.casa}</Text>
+        </View>
+        <View style={styles.vsContainer}>
+          {jogo.placar ? (
+            <Text style={[styles.score, vivo && styles.scoreVivo]}>{jogo.placar}</Text>
+          ) : (
+            <Text style={styles.vsText}>X</Text>
+          )}
+        </View>
+        <View style={styles.team}>
+          <Escudo uri={jogo.foraLogo} />
+          <Text style={styles.teamName} numberOfLines={2}>{jogo.fora}</Text>
+        </View>
+      </View>
+
+      <View style={styles.channelRow}>
+        {jogo.canal.logo ? (
+          <Image source={{ uri: jogo.canal.logo }} style={styles.channelLogo} contentFit="contain" />
+        ) : (
+          <Ionicons name="tv-outline" size={18} color={Colors.textSecondary} />
+        )}
+        <Text style={styles.channelName} numberOfLines={1}>{jogo.canal.name}</Text>
+        <View style={styles.playPill}>
+          <Ionicons name="play" size={14} color="#FFFFFF" />
+          <Text style={styles.playText}>Assistir</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
 
 export default function EventsScreen() {
   const insets = useSafeAreaInsets();
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const channels = useChannelStore(s => s.channels);
+  const fetchChannels = useChannelStore(s => s.fetchChannels);
+  const [jogos, setJogos] = useState<Jogo[] | null>(null);
+  const [erro, setErro] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-
-  const fetchEvents = async () => {
-    try {
-      const response = await fetch('https://embedtv.cc/api/events');
-      if (!response.ok) throw new Error('Network response was not ok');
-      const data: EventItem[] = await response.json();
-      
-      const now = new Date().getTime();
-      const validEvents = data.filter(event => {
-        let fimMs = 0;
-        let inicioMs = 0;
-        if (event.time_end) fimMs = new Date(event.time_end).getTime();
-        if (event.time_start) inicioMs = new Date(event.time_start).getTime();
-        
-        // Fallback 2 hours
-        if (!fimMs && inicioMs) {
-            fimMs = inicioMs + (2 * 60 * 60 * 1000);
-        }
-        
-        // Se ainda não terminou, mantém (ou se der NaN por erro de parse)
-        return isNaN(fimMs) || fimMs > now;
-      });
-
-      // Sort by time_start if needed, assuming the API returns them ordered
-      setEvents(validEvents);
-    } catch (error) {
-      console.error('Failed to fetch events:', error);
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  };
+  const [agora, setAgora] = useState(Date.now());
+  const buscando = useRef(false);
 
   useEffect(() => {
-    fetchEvents();
-  }, []);
+    if (channels.length === 0) void fetchChannels();
+  }, [channels.length, fetchChannels]);
+
+  // Canal adulto não entra na agenda.
+  const canais = useMemo(
+    () => channels.filter(c => c.category !== 'ADULTOS' && c.category !== 'Adulto'),
+    [channels],
+  );
+
+  const carregar = useCallback(async () => {
+    if (buscando.current || canais.length === 0) return;
+    buscando.current = true;
+    const lidos = await buscarJogos(canais);
+    buscando.current = false;
+    setAgora(Date.now());
+    if (lidos) {
+      setJogos(lidos);
+      setErro(false);
+    } else {
+      setErro(true);
+    }
+    setIsRefreshing(false);
+  }, [canais]);
+
+  useFocusEffect(useCallback(() => {
+    void carregar();
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') void carregar();
+    }, INTERVALO);
+    const sub = AppState.addEventListener('change', s => {
+      if (s === 'active') void carregar();
+    });
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [carregar]));
 
   const onRefresh = useCallback(() => {
     setIsRefreshing(true);
-    fetchEvents();
-  }, []);
+    void carregar();
+  }, [carregar]);
 
-  const handlePlay = (event: EventItem) => {
-    // Determine player URL
-    let playerUrl = '';
-    let channelSlug = event.slug; // default to event slug if no player
-    if (event.players && event.players.length > 0) {
-      playerUrl = event.players[0];
-      const parts = playerUrl.split('/');
-      channelSlug = parts[parts.length - 1].toLowerCase();
-    }
-
-    // Redirect to Player, passing the extracted channel slug as id
-    router.push({
-      pathname: '/player/[id]',
-      params: {
-        id: channelSlug,
-        url: playerUrl,
-        name: event.title,
-        category: event.league.name,
-        logo: event.league.image,
-      },
+  const { linhas, total, vivos } = useMemo(() => {
+    const restantes = (jogos ?? []).filter(j => !acabou(j, agora)).sort((a, b) => a.inicio - b.inicio);
+    const grupos: Jogo[][] = GRUPOS.map(() => []);
+    for (const j of restantes) grupos[grupoDe(j, agora)].push(j);
+    const saida: Linha[] = [];
+    grupos.forEach((lista, i) => {
+      if (lista.length === 0) return;
+      saida.push({ tipo: 'grupo', titulo: GRUPOS[i] });
+      for (const jogo of lista) saida.push({ tipo: 'jogo', jogo });
     });
-  };
+    return { linhas: saida, total: restantes.length, vivos: grupos[0].length };
+  }, [jogos, agora]);
 
-  const renderItem = ({ item }: { item: EventItem }) => {
-    const startTime = new Date(item.time_start);
-    const timeFormatted = startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.leagueInfo}>
-            {item.league.image ? (
-              <Image source={{ uri: item.league.image }} style={styles.leagueIcon} contentFit="contain" />
-            ) : (
-              <Ionicons name="trophy-outline" size={16} color={Colors.textSecondary} />
-            )}
-            <Text style={styles.leagueName} numberOfLines={1}>{item.league.name}</Text>
-          </View>
-          <View style={styles.timeBadge}>
-            <Ionicons name="time-outline" size={14} color={Colors.textSecondary} style={{ marginRight: 4 }} />
-            <Text style={styles.timeText}>{timeFormatted}</Text>
-          </View>
-        </View>
-
-        <View style={styles.teamsContainer}>
-          <View style={styles.team}>
-            {item.teams.home.image ? (
-              <Image source={{ uri: item.teams.home.image }} style={styles.teamLogo} contentFit="contain" />
-            ) : (
-              <View style={[styles.teamLogo, styles.placeholderLogo]}>
-                <Ionicons name="shield-outline" size={24} color={Colors.textSecondary} />
-              </View>
-            )}
-            <Text style={styles.teamName} numberOfLines={2} adjustsFontSizeToFit>{item.teams.home.name}</Text>
-          </View>
-
-          <View style={styles.vsContainer}>
-            <Text style={styles.vsText}>X</Text>
-          </View>
-
-          <View style={styles.team}>
-            {item.teams.away.image ? (
-              <Image source={{ uri: item.teams.away.image }} style={styles.teamLogo} contentFit="contain" />
-            ) : (
-              <View style={[styles.teamLogo, styles.placeholderLogo]}>
-                <Ionicons name="shield-outline" size={24} color={Colors.textSecondary} />
-              </View>
-            )}
-            <Text style={styles.teamName} numberOfLines={2} adjustsFontSizeToFit>{item.teams.away.name}</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity 
-          style={styles.playButton} 
-          onPress={() => handlePlay(item)}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="play" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-          <Text style={styles.playButtonText}>Assistir</Text>
-        </TouchableOpacity>
+  const renderItem = useCallback(({ item }: { item: Linha }) =>
+    item.tipo === 'grupo' ? (
+      <View style={styles.groupHeader}>
+        {item.titulo === GRUPOS[0] && <View style={styles.liveDot} />}
+        <Text style={styles.groupTitle}>{item.titulo}</Text>
       </View>
-    );
-  };
+    ) : (
+      <CartaoJogo jogo={item.jogo} agora={agora} />
+    ), [agora]);
+
+  const carregando = jogos === null && !erro;
+  const resumo = jogos === null
+    ? ''
+    : `${plural(total, 'jogo', 'jogos')} nos canais da lista · ${vivos} ao vivo`;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Eventos ao Vivo</Text>
+        <Text style={styles.headerTitle}>Eventos</Text>
+        {!!resumo && <Text style={styles.headerSub}>{resumo}</Text>}
       </View>
 
-      {isLoading ? (
+      {carregando ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={Colors.primary} />
         </View>
       ) : (
         <FlashList
-          data={events}
+          data={linhas}
           renderItem={renderItem}
-          keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 80 }]}
+          extraData={agora}
+          getItemType={item => item.tipo}
+          keyExtractor={item => item.tipo === 'grupo'
+            ? `g-${item.titulo}`
+            : `j-${item.jogo.casa}-${item.jogo.fora}-${item.jogo.inicio}`}
+          contentContainerStyle={{ ...styles.listContent, paddingBottom: insets.bottom + 80 }}
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -197,7 +243,11 @@ export default function EventsScreen() {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="calendar-outline" size={64} color={Colors.textSecondary} />
-              <Text style={styles.emptyText}>Nenhum evento disponível no momento.</Text>
+              <Text style={styles.emptyText}>
+                {erro
+                  ? 'Não deu para carregar a agenda agora. Tentando de novo em um minuto.'
+                  : 'Nenhum jogo nos canais da lista agora. A agenda se atualiza sozinha.'}
+              </Text>
             </View>
           }
         />
@@ -214,13 +264,16 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
   },
   headerTitle: {
     fontSize: Typography.h2.fontSize,
     fontWeight: 'bold',
     color: Colors.text,
+  },
+  headerSub: {
+    marginTop: 2,
+    fontSize: Typography.caption.fontSize,
+    color: Colors.textSecondary,
   },
   loadingContainer: {
     flex: 1,
@@ -230,6 +283,17 @@ const styles = StyleSheet.create({
   listContent: {
     padding: Spacing.md,
   },
+  groupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
+  },
+  groupTitle: {
+    fontSize: Typography.h3.fontSize,
+    fontWeight: 'bold',
+    color: Colors.text,
+  },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: BorderRadius.lg,
@@ -237,6 +301,9 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  cardVivo: {
+    borderColor: Colors.liveGlow,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -257,7 +324,6 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     marginRight: 6,
-    borderRadius: 10,
   },
   leagueName: {
     fontSize: Typography.caption.fontSize,
@@ -278,26 +344,46 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontWeight: '600',
   },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.sm,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.live,
+    marginRight: 6,
+  },
+  liveText: {
+    fontSize: Typography.caption.fontSize,
+    color: Colors.live,
+    fontWeight: 'bold',
+  },
   teamsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   team: {
     flex: 1,
     alignItems: 'center',
   },
   teamLogo: {
-    width: 60,
-    height: 60,
+    width: 56,
+    height: 56,
     marginBottom: Spacing.sm,
   },
   placeholderLogo: {
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 30,
+    borderRadius: 28,
   },
   teamName: {
     fontSize: Typography.body.fontSize,
@@ -307,6 +393,8 @@ const styles = StyleSheet.create({
   },
   vsContainer: {
     paddingHorizontal: Spacing.md,
+    minWidth: 80,
+    alignItems: 'center',
   },
   vsText: {
     fontSize: Typography.h3.fontSize,
@@ -314,21 +402,50 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     opacity: 0.5,
   },
-  playButton: {
-    backgroundColor: Colors.primary,
+  score: {
+    fontSize: 26,
+    color: Colors.text,
+    fontWeight: '900',
+  },
+  scoreVivo: {
+    color: Colors.text,
+  },
+  channelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
+    backgroundColor: Colors.surfaceVariant,
     borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
   },
-  playButtonText: {
-    color: '#FFFFFF',
+  channelLogo: {
+    width: 36,
+    height: 24,
+  },
+  channelName: {
+    flex: 1,
+    marginLeft: Spacing.sm,
     fontSize: Typography.body.fontSize,
+    color: Colors.text,
+    fontWeight: '600',
+  },
+  playPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+  },
+  playText: {
+    color: '#FFFFFF',
+    fontSize: Typography.caption.fontSize,
     fontWeight: 'bold',
   },
   emptyContainer: {
     paddingTop: 60,
+    paddingHorizontal: Spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
   },

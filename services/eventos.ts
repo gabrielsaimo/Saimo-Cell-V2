@@ -1,0 +1,155 @@
+/**
+ * Os jogos de hoje e dos próximos dias que passam em algum canal da lista,
+ * com a mesma lógica da tela de Eventos do TV Box.
+ *
+ * Duas fontes: a agenda da embedtv diz em que canal cada jogo passa; os
+ * placares da ESPN dizem se já começou, o placar e o tempo de jogo, e trazem
+ * escudos melhores. Só entra jogo que tem canal (sem canal não há o que
+ * assistir), e jogo encerrado sai.
+ */
+import type { Channel } from '../types';
+
+export interface Jogo {
+    casa: string;
+    fora: string;
+    casaLogo: string;
+    foraLogo: string;
+    liga: string;
+    ligaLogo: string;
+    inicio: number;
+    fim: number;
+    canal: Channel;
+    /** "pre", "in" ou "post", quando a ESPN conhece o jogo. */
+    estado: string;
+    placar: string;
+    tempo: string;
+}
+
+export const aoVivo = (j: Jogo, agora: number) =>
+    j.estado === 'in' || (j.estado !== 'post' && agora >= j.inicio && agora <= j.fim);
+export const acabou = (j: Jogo, agora: number) => j.estado === 'post' || agora > j.fim;
+
+const EMBED = 'https://embedtv.cc/api/events';
+const ESPN = [
+    'soccer/bra.1', 'soccer/bra.2', 'soccer/bra.copa_do_brazil', 'soccer/conmebol.libertadores',
+    'soccer/conmebol.sudamericana', 'soccer/uefa.champions', 'soccer/uefa.europa', 'soccer/eng.1',
+    'soccer/esp.1', 'soccer/ita.1', 'soccer/ger.1', 'soccer/fra.1', 'soccer/por.1', 'soccer/ned.1',
+    'soccer/arg.1', 'soccer/ksa.1', 'soccer/fifa.world', 'soccer/fifa.worldq.conmebol',
+    'basketball/nba', 'football/nfl', 'baseball/mlb', 'hockey/nhl', 'mma/ufc',
+];
+const SIGLAS = new Set(['fc', 'ec', 'sc', 'ac', 'afc', 'cf', 'cd', 'club', 'clube', 'esporte', 'sport',
+    'futebol', 'de', 'do', 'da', 'sp', 'rj', 'mg', 'rs', 'pr', 'ba', 'pe', 'ce', 'go', 'sad']);
+const HORA = 3_600_000;
+
+interface Placar {
+    casa: string; fora: string; casaLogo: string; foraLogo: string; ligaLogo: string;
+    inicio: number; estado: string; placar: string; tempo: string;
+}
+
+async function json(url: string): Promise<any | null> {
+    try {
+        const r = await fetch(url);
+        return r.ok ? await r.json() : null;
+    } catch {
+        return null;
+    }
+}
+
+/** O canal pelo fim do endereço do player ("…/premiere-fc" é o Premiere FC). */
+function canalDo(url: string, canais: Channel[]): Channel | undefined {
+    const slug = (url.split('/').pop() ?? '').toLowerCase().replace(/[- ]/g, '');
+    if (!slug) return undefined;
+    const chave = (c: Channel) => c.name.toLowerCase().replace(/ /g, '');
+    return canais.find(c => chave(c) === slug) ?? canais.find(c => chave(c).includes(slug));
+}
+
+function lerAgenda(arr: any, canais: Channel[]): Jogo[] {
+    if (!Array.isArray(arr)) return [];
+    const vistos = new Set<string>();
+    const jogos: Jogo[] = [];
+    for (const o of arr) {
+        try {
+            const player = o?.players?.[0];
+            if (!player) continue;
+            const canal = canalDo(player, canais);
+            if (!canal) continue;
+            const inicio = new Date(o.time_start).getTime();
+            if (isNaN(inicio)) continue;
+            const fimLido = o.time_end ? new Date(o.time_end).getTime() : NaN;
+            const j: Jogo = {
+                casa: o.teams.home.name, fora: o.teams.away.name,
+                casaLogo: o.teams.home.image ?? '', foraLogo: o.teams.away.image ?? '',
+                liga: o.league?.name ?? '', ligaLogo: o.league?.image ?? '',
+                inicio, fim: isNaN(fimLido) ? inicio + 2 * HORA : fimLido,
+                canal, estado: '', placar: '', tempo: '',
+            };
+            const chave = `${j.casa} x ${j.fora}|${j.inicio}`;
+            if (vistos.has(chave)) continue;
+            vistos.add(chave);
+            jogos.push(j);
+        } catch {
+            // jogo com dados faltando fica de fora
+        }
+    }
+    return jogos;
+}
+
+function lerEspn(dados: any): Placar[] {
+    const ligaLogo = dados?.leagues?.[0]?.logos?.[0]?.href ?? '';
+    const saida: Placar[] = [];
+    for (const ev of dados?.events ?? []) {
+        const comps: any[] = ev?.competitions?.[0]?.competitors ?? [];
+        const casa = comps.find(c => c.homeAway === 'home');
+        const fora = comps.find(c => c.homeAway !== 'home');
+        if (!casa || !fora) continue;
+        const status = ev?.status?.type;
+        const estado = status?.state ?? '';
+        saida.push({
+            casa: casa.team?.name ?? '', fora: fora.team?.name ?? '',
+            casaLogo: casa.team?.logo ?? '', foraLogo: fora.team?.logo ?? '',
+            ligaLogo, inicio: new Date(ev.date).getTime() || 0, estado,
+            placar: estado === 'pre' ? '' : `${casa.score ?? ''} x ${fora.score ?? ''}`,
+            tempo: estado === 'in' ? status?.shortDetail ?? '' : '',
+        });
+    }
+    return saida;
+}
+
+/** Só palavras inteiras de sigla saem: "Palmeiras" e "SE Palmeiras" casam. */
+function chaveTime(nome: string): string {
+    return nome.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase()
+        .split(/[^a-z0-9]+/).filter(p => p && !SIGLAS.has(p)).join('');
+}
+
+function mesmoTime(a: string, b: string): boolean {
+    const x = chaveTime(a);
+    const y = chaveTime(b);
+    if (!x || !y) return false;
+    return x === y || (x.length >= 4 && y.includes(x)) || (y.length >= 4 && x.includes(y));
+}
+
+/** null quando a agenda não veio. */
+export async function buscarJogos(canais: Channel[]): Promise<Jogo[] | null> {
+    const [agenda, ...placares] = await Promise.all([
+        json(EMBED),
+        ...ESPN.map(l => json(`https://site.api.espn.com/apis/site/v2/sports/${l}/scoreboard`)),
+    ]);
+    if (!agenda) return null;
+    const espn = placares.filter(Boolean).flatMap(lerEspn);
+    return lerAgenda(agenda, canais).map(jogo => {
+        // O mesmo jogo na ESPN: mesmos times (em qualquer ordem) e começo
+        // a menos de quatro horas um do outro.
+        const par = espn.find(e =>
+            Math.abs(e.inicio - jogo.inicio) < 4 * HORA &&
+            ((mesmoTime(e.casa, jogo.casa) && mesmoTime(e.fora, jogo.fora)) ||
+                (mesmoTime(e.casa, jogo.fora) && mesmoTime(e.fora, jogo.casa))));
+        if (!par) return jogo;
+        return {
+            ...jogo,
+            casaLogo: par.casaLogo || jogo.casaLogo,
+            foraLogo: par.foraLogo || jogo.foraLogo,
+            ligaLogo: jogo.ligaLogo || par.ligaLogo,
+            estado: par.estado, placar: par.placar, tempo: par.tempo,
+        };
+    });
+}
