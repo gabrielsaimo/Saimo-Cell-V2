@@ -2,7 +2,7 @@
   "expo": {
     "name": "Saimo-TV",
     "slug": "saimo-v2",
-    "version": "2.1.2",
+    "version": "2.1.3",
     "orientation": "default",
     "icon": "./assets/images/saimo_tv_logo.png",
     "scheme": "saimo",
@@ -39,7 +39,7 @@
         "backgroundColor": "#0A0A0F"
       },
       "package": "com.saimo.tv",
-      "versionCode": 20102,
+      "versionCode": 20103,
       "permissions": [
         "INTERNET",
         "VIBRATE",
