@@ -1,13 +1,14 @@
-import React, { memo, useMemo, useCallback } from 'react';
+import React, { memo, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
   Text,
   Dimensions,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { FlashList } from '@shopify/flash-list';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 
 import type { Channel } from '../types';
 import { Colors, Spacing } from '../constants/Colors';
@@ -15,12 +16,14 @@ import ChannelCard from './ChannelCard';
 
 interface ChannelListProps {
   channels: Channel[];
+  /** A lista ainda está chegando: mostra a espera, e não "nenhum canal". */
+  carregando?: boolean;
 }
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - Spacing.lg * 3) / 2;
 
-const ChannelList = memo(({ channels }: ChannelListProps) => {
+const ChannelList = memo(({ channels, carregando = false }: ChannelListProps) => {
   // Divide canais em pares para layout de 2 colunas
   const rows = useMemo(() => {
     const result: Channel[][] = [];
@@ -30,6 +33,14 @@ const ChannelList = memo(({ channels }: ChannelListProps) => {
     return result;
   }, [channels]);
 
+  // Trocar de categoria ou de busca volta ao topo. Sem isto a lista nova
+  // abria na altura em que a anterior estava rolada — no fim, ou em branco.
+  const lista = useRef<FlashListRef<Channel[]>>(null);
+  const primeiro = channels[0]?.id;
+  useEffect(() => {
+    lista.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [primeiro, channels.length]);
+
   const renderRow = useCallback(({ item: row }: { item: Channel[] }) => (
     <View style={styles.row}>
       {row.map((channel) => (
@@ -38,6 +49,14 @@ const ChannelList = memo(({ channels }: ChannelListProps) => {
       {row.length === 1 && <View style={{ width: CARD_WIDTH }} />}
     </View>
   ), []);
+
+  if (channels.length === 0 && carregando) {
+    return (
+      <View style={styles.emptyContainer}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
 
   if (channels.length === 0) {
     return (
@@ -51,15 +70,14 @@ const ChannelList = memo(({ channels }: ChannelListProps) => {
   return (
     <View style={styles.listContainer}>
       <FlashList
+        ref={lista}
         data={rows}
         renderItem={renderRow}
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
         keyExtractor={(item) => item[0].id}
         removeClippedSubviews={Platform.OS === 'android'}
-        maintainVisibleContentPosition={{
-          autoscrollToTopThreshold: 10,
-        }}
+        keyboardShouldPersistTaps="handled"
       />
     </View>
   );

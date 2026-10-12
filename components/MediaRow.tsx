@@ -69,8 +69,9 @@ const MediaRow = memo(({ title, categoryId, items, onSeeAll }: MediaRowProps) =>
     </View>
   );
 }, (prev, next) => {
-  return prev.categoryId === next.categoryId && 
-         prev.items.length === next.items.length;
+  // Pela lista em si, não pelo tamanho: uma fileira trocada por outra do
+  // mesmo tamanho (gêneros recarregados, "Continuar" atualizado) não mudava.
+  return prev.categoryId === next.categoryId && prev.items === next.items;
 });
 
 MediaRow.displayName = 'MediaRow';

@@ -1,3 +1,5 @@
+// Primeiro de todos: silencia o log de depuração antes de os módulos rodarem.
+import '../services/semLogs';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';

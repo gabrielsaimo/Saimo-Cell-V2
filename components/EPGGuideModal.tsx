@@ -20,6 +20,8 @@ import { Colors, Typography, Spacing, BorderRadius, Shadows } from '../constants
 import { getCurrentProgram, onEPGUpdate } from '../services/epgService';
 import { getAllChannels } from '../data/channels';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useChannelStore } from '../stores/channelStore';
+import { plural } from '../utils/plural';
 
 const { height } = Dimensions.get('window');
 
@@ -251,6 +253,9 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const adultUnlocked = useSettingsStore((s) => s.adultUnlocked);
+  // A lista vem de uma variável do módulo de canais; sem depender da store,
+  // o guia montado na aba TV antes de os canais chegarem ficava com 0 canais.
+  const canaisCarregados = useChannelStore((s) => s.channels);
 
   // Normais primeiro, adultos no final (só se liberado) — lazy load natural do FlatList
   const allChannels = useMemo(() => {
@@ -258,7 +263,7 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
     if (!adultUnlocked) return normal;
     const adult = getAllChannels(true).filter((c) => c.category === 'Adulto');
     return [...normal, ...adult];
-  }, [adultUnlocked]);
+  }, [adultUnlocked, canaisCarregados]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quantidade de canais normais → initialNumToRender carrega todos de uma vez
   const normalCount = useMemo(
@@ -345,7 +350,7 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
                 <View>
                   <Text style={styles.headerTitle}>Guia de Programação</Text>
                   <Text style={styles.headerSub}>
-                    {filteredChannels.length} canais
+                    {plural(filteredChannels.length, 'canal', 'canais')}
                   </Text>
                 </View>
               </View>

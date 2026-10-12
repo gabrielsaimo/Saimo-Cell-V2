@@ -109,27 +109,39 @@ export function plutoIdDe(channel: Pick<Channel, 'url' | 'logo' | 'streams'>): P
 }
 
 export function registerChannel(appId: string, name: string, pluto?: PlutoDoCanal): void {
+    const mudou = appChannelNames.get(appId) !== name
+        || plutoIds.get(appId) !== pluto?.id
+        || plutoPrincipais.has(appId) !== !!pluto?.principal;
     appChannelNames.set(appId, name);
     if (pluto) plutoIds.set(appId, pluto.id);
     else plutoIds.delete(appId);
     if (pluto?.principal) plutoPrincipais.add(appId);
     else plutoPrincipais.delete(appId);
+    hasRegisteredChannels = true;
+    // O mesmo canal registrado de novo (a lista recarregada) não muda nada.
+    if (!mudou) return;
     resolvedIds.delete(appId);
     needsReload = true;
-    hasRegisteredChannels = true;
+    agendarRecarga();
+}
 
-    console.log(`[EPG] Registered: ${name} (${appId}) - total: ${appChannelNames.size}`);
-
-    // If EPG was already loaded, trigger reload with new channels
-    if (loadState === 'loaded') {
-        console.log('[EPG] Channel registered after load, triggering reload...');
-        setState('idle');
+/**
+ * Uma carga só depois que os canais param de chegar. Antes cada canal
+ * registrado com o guia já carregado disparava uma carga nova, e uma
+ * abertura do app varria o arquivo de 16,8 MB três vezes (uns 4,5 s de JS
+ * enquanto a lista rolava).
+ */
+let recargaAgendada: ReturnType<typeof setTimeout> | null = null;
+function agendarRecarga(): void {
+    if (recargaAgendada) clearTimeout(recargaAgendada);
+    recargaAgendada = setTimeout(() => {
+        recargaAgendada = null;
+        if (!initCalled) return;
+        // Carregando: o fim da carga vê `needsReload` e refaz uma vez.
+        if (loadState === 'loading' || isLoadingLocked) return;
+        if (loadState === 'loaded') setState('idle');
         loadFromCacheOrFetch();
-    } else if (initCalled && loadState === 'idle') {
-        // If init was called but nothing loaded yet, trigger now
-        console.log('[EPG] Init was called, loading now...');
-        loadFromCacheOrFetch();
-    }
+    }, 300);
 }
 
 export function registerEpgAlias(_c: string, _e: string): void {}
@@ -408,7 +420,8 @@ async function extractProgrammes(file: FSFile, targetIds: Set<string>, pluto = f
                             const tM = inner.match(/<title[^>]*>([^<]+)<\/title>/);
                             if (tM) {
                                 const title = dec(tM[1]).trim();
-                                if (title) {
+                                // "No Data" é o feed tapando buraco: é o mesmo que não ter guia.
+                                if (title && title.toLowerCase() !== 'no data') {
                                     const dM = inner.match(/<desc[^>]*>([\s\S]*?)<\/desc>/);
                                     const cM = inner.match(/<category[^>]*>([^<]+)<\/category>/);
                                     const iM = inner.match(/<icon[^>]*src="([^"]+)"/);
@@ -554,6 +567,88 @@ async function fillPluto(): Promise<void> {
     }
 }
 
+// ─── Guia já processado ─────────────────────────────────────────────────────────
+//
+// Varrer o XML de 16,8 MB custa uns 2 s de JS a cada abertura, para chegar
+// sempre ao mesmo resultado enquanto o arquivo não muda: algumas dezenas de
+// milhares de programas dos canais do app. Esse resultado fica gravado ao
+// lado do XML, com a data do XML e a lista de canais que o produziu; se os
+// dois batem, a abertura seguinte lê só ele.
+
+function arquivoProcessado(): FSFile {
+    return new FSFile(getCacheDir(), 'epg-processado.json');
+}
+
+/** Os canais do app e seus nomes: mudou um, o processado não vale mais. */
+function assinaturaDosCanais(): string {
+    return [...appChannelNames.entries()].sort(([a], [b]) => a.localeCompare(b))
+        .map(([id, nome]) => `${id}=${nome}`).join('|');
+}
+
+/// Acima disto, gravar o processado pesaria mais que varrer o XML de novo.
+const PROCESSADO_MAX = 8 * 1024 * 1024;
+
+/// O processado guarda só as próximas 30 h (os cartões e o guia do dia):
+/// com os 7 dias inteiros eram 7 MB, e ler isso de uma vez estourava um
+/// celular de 48 MB de memória. O XML vale 12 h, então sempre sobram 18 h.
+const PROCESSADO_JANELA_MS = 30 * 3600000;
+
+function gravarProcessado(xml: FSFile): void {
+    try {
+        const ate = Date.now() + PROCESSADO_JANELA_MS;
+        const programas: Record<string, [number, number, string, string, string, string?][]> = {};
+        channelPrograms.forEach((lista, id) => {
+            programas[id] = lista.filter(p => p.startTime.getTime() <= ate).map(p => {
+                const linha: [number, number, string, string, string, string?] =
+                    [p.startTime.getTime(), p.endTime.getTime(), p.title, p.description ?? '', p.category ?? ''];
+                if (p.thumbnail) linha.push(p.thumbnail);
+                return linha;
+            });
+        });
+        const texto = JSON.stringify({
+            xml: xml.lastModified ?? 0,
+            canais: assinaturaDosCanais(),
+            ids: [...resolvedIds.entries()],
+            programas,
+        });
+        if (texto.length > PROCESSADO_MAX) return;
+        arquivoProcessado().write(texto);
+    } catch (e) {
+        console.warn('[EPG] Não gravou o guia processado:', e);
+    }
+}
+
+function lerProcessado(xml: FSFile): boolean {
+    try {
+        const arquivo = arquivoProcessado();
+        if (!arquivo.exists) return false;
+        const dados = JSON.parse(arquivo.textSync());
+        if (dados?.xml !== (xml.lastModified ?? 0) || dados?.canais !== assinaturaDosCanais()) {
+            console.warn('[EPG] Guia processado de outro XML ou outra lista de canais: varrendo de novo');
+            return false;
+        }
+        const limite = Date.now() - 3600000;
+        channelPrograms.clear();
+        resolvedIds.clear();
+        for (const [appId, xmlId] of dados.ids as [string, string | null][]) resolvedIds.set(appId, xmlId);
+        for (const [id, linhas] of Object.entries(dados.programas as Record<string, [number, number, string, string, string, string?][]>)) {
+            channelPrograms.set(id, linhas.filter(l => l[1] >= limite).map(([ini, fim, title, description, category, thumbnail]) => ({
+                id: `${id}-${ini}`,
+                title,
+                description,
+                category,
+                startTime: new Date(ini),
+                endTime: new Date(fim),
+                ...(thumbnail ? { thumbnail } : {}),
+            })));
+        }
+        return true;
+    } catch (e) {
+        console.warn('[EPG] Guia processado ilegível: varrendo de novo', e);
+        return false;
+    }
+}
+
 // ─── Load ─────────────────────────────────────────────────────────────────────
 
 async function doLoadSync(xml: FSFile): Promise<void> {
@@ -580,6 +675,7 @@ async function doLoadSync(xml: FSFile): Promise<void> {
         setState('loaded');
         console.log(`[EPG] Load complete - ${channelPrograms.size} channels`);
         notifyUpdate();
+        gravarProcessado(xml);
         void fillGuiaDeTvGaps();
         void fillPluto();
 
@@ -609,6 +705,17 @@ function loadFromCacheOrFetch(): void {
     loadError = null;
 
     const cached = cachedFile(getCacheFile(), CACHE_TTL_MS);
+    if (cached && lerProcessado(cached)) {
+        needsReload = false;
+        loadError = null;
+        setState('loaded');
+        notifyProgress(100, channelPrograms.size, appChannelNames.size);
+        notifyUpdate();
+        isLoadingLocked = false;
+        void fillGuiaDeTvGaps();
+        void fillPluto();
+        return;
+    }
     const promise = cached
         ? doLoadSync(cached)
         : fetchAndLoadAsync(false);
@@ -761,6 +868,9 @@ export async function clearEPGCache(): Promise<void> {
         if (dir.exists) dir.delete();
     } catch {}
     notifyProgress(0, 0, 0);
+    // Os cards tiram o programa antigo da tela até o guia novo chegar
+    // (notifyUpdate só avisa quem tem programa, e agora ninguém tem).
+    for (const appId of appChannelNames.keys()) updateListeners.forEach(l => l(appId));
 }
 
 export function getEPGStats() {

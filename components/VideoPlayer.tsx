@@ -7,12 +7,13 @@ import {
   Pressable,
   Dimensions,
   StatusBar,
+  AppState,
   BackHandler,
   Platform,
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import Video, { DRMType, SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
+import Video, { BufferingStrategyType, DRMType, SelectedTrackType, SelectedVideoTrackType, VideoRef } from 'react-native-video';
 import { useRemoteMediaClient } from 'react-native-google-cast';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -72,6 +73,20 @@ interface VideoPlayerProps {
 const SEM_IMAGEM_MS = 25_000;
 /** Quantas vezes a mesma fonte é reaberta antes de descer para a seguinte. */
 const RETOMADAS_MAX = 3;
+/**
+ * Buffer do ao vivo. Era de 50 s sem teto: num celular de 48 MB de heap um
+ * canal Full HD enchia a memória do player. Agora até 30 s, limitados a 30%
+ * do heap com 20% de folga (a biblioteca só olha a memória com
+ * DependingOnMemory).
+ */
+const BUFFER_AO_VIVO = {
+  minBufferMs: 15000,
+  maxBufferMs: 30000,
+  bufferForPlaybackMs: 2500,
+  bufferForPlaybackAfterRebufferMs: 5000,
+  maxHeapAllocationPercent: 0.3,
+  minBufferMemoryReservePercent: 0.2,
+};
 
 export default function VideoPlayer({ channel }: VideoPlayerProps) {
   const router = useRouter();
@@ -88,6 +103,19 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
       drm: activeChannel.drm,
     };
   }, [activeChannel, sourceIndex]);
+
+  // A fonte do player num objeto estável: um objeto novo a cada render fazia
+  // o componente do vídeo comparar e reenviar a fonte a cada atualização.
+  const fonteDoPlayer = useMemo(() => ({
+    uri: activeStream.url,
+    headers: activeStream.headers,
+    // Há provedores que publicam o master HLS como text/plain e com
+    // extensão `.txt`. Como este campo já é uma fonte de mídia, todo
+    // `.txt` aqui deve ir explicitamente para o demuxer HLS.
+    type: activeStream.url.split('?')[0].toLowerCase().endsWith('.txt')
+      ? 'm3u8'
+      : undefined,
+  }), [activeStream.url, activeStream.headers]);
 
   const client = useRemoteMediaClient();
   const videoRef = useRef<VideoRef>(null);
@@ -243,6 +271,28 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
         } catch {}
       })();
     };
+  }, []);
+
+  // A janela de um Modal (guia, lista de canais) e a volta do PiP trazem as
+  // barras do sistema de volta por cima do vídeo: some com elas de novo.
+  useEffect(() => {
+    if (Platform.OS !== 'android' || showGuide || showMenu) return;
+    // Depois da janela do Modal terminar de fechar: ela devolve as barras ao
+    // sair, por cima de um pedido feito antes.
+    const espera = setTimeout(() => {
+      StatusBar.setHidden(true);
+      NavigationBar.setVisibilityAsync('hidden').catch(() => {});
+    }, 400);
+    return () => clearTimeout(espera);
+  }, [showGuide, showMenu]);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const assinatura = AppState.addEventListener('change', (estado) => {
+      if (estado !== 'active') return;
+      StatusBar.setHidden(true);
+      NavigationBar.setVisibilityAsync('hidden').catch(() => {});
+    });
+    return () => assinatura.remove();
   }, []);
 
   // ─── Back ───
@@ -483,16 +533,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
           <Video
             key={videoKey}
             ref={videoRef}
-            source={{
-              uri: activeStream.url,
-              headers: activeStream.headers,
-              // Há provedores que publicam o master HLS como text/plain e com
-              // extensão `.txt`. Como este campo já é uma fonte de mídia, todo
-              // `.txt` aqui deve ir explicitamente para o demuxer HLS.
-              type: activeStream.url.split('?')[0].toLowerCase().endsWith('.txt')
-                ? 'm3u8'
-                : undefined,
-            }}
+            source={fonteDoPlayer}
             drm={drmConfig}
             style={styles.video}
             resizeMode="contain"
@@ -514,12 +555,11 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             selectedTextTrack={selectedTextIdx !== null
               ? { type: SelectedTrackType.INDEX, value: selectedTextIdx }
               : { type: SelectedTrackType.DISABLED }}
-            bufferConfig={{
-              minBufferMs: 15000,
-              maxBufferMs: 50000,
-              bufferForPlaybackMs: 2500,
-              bufferForPlaybackAfterRebufferMs: 5000,
-            }}
+            // O buffer cabe na memória do aparelho (ver BUFFER_AO_VIVO).
+            bufferingStrategy={BufferingStrategyType.DEPENDING_ON_MEMORY}
+            bufferConfig={BUFFER_AO_VIVO}
+            // Ao vivo só mostra o tempo no relógio: uma vez por segundo basta.
+            progressUpdateInterval={1000}
             controls={false}
             repeat
             ignoreSilentSwitch="ignore"

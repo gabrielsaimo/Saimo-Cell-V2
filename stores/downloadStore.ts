@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { DownloadItem, DownloadTask, DownloadStatus } from '../types';
 
@@ -22,6 +23,46 @@ interface DownloadState {
     getTotalBytes: () => number;
     hasDownload: (id: string) => boolean;
 }
+
+/**
+ * Gravação dos downloads com calma: no máximo a cada 5 s, e já ao sair da tela.
+ *
+ * O progresso de cada download muda várias vezes por segundo, e a store era
+ * inteira serializada e gravada no AsyncStorage a cada mudança — itens,
+ * tarefas e os snapshots de retomada. Um crash perde no máximo os últimos
+ * 5 s, e a retomada usa o snapshot de antes.
+ */
+const pendentes = new Map<string, StorageValue<unknown>>();
+let gravacao: ReturnType<typeof setTimeout> | null = null;
+
+function gravarPendentes(): void {
+    if (gravacao) { clearTimeout(gravacao); gravacao = null; }
+    for (const [nome, valor] of pendentes) {
+        AsyncStorage.setItem(nome, JSON.stringify(valor)).catch(() => {});
+    }
+    pendentes.clear();
+}
+
+AppState.addEventListener('change', (estado) => {
+    if (estado !== 'active') gravarPendentes();
+});
+
+const armazenamentoComCalma: PersistStorage<any> = {
+    getItem: async (nome) => {
+        const pendente = pendentes.get(nome);
+        if (pendente) return pendente as StorageValue<any>;
+        const texto = await AsyncStorage.getItem(nome);
+        return texto ? (JSON.parse(texto) as StorageValue<any>) : null;
+    },
+    setItem: (nome, valor) => {
+        pendentes.set(nome, valor);
+        if (!gravacao) gravacao = setTimeout(gravarPendentes, 5000);
+    },
+    removeItem: async (nome) => {
+        pendentes.delete(nome);
+        await AsyncStorage.removeItem(nome);
+    },
+};
 
 export const useDownloadStore = create<DownloadState>()(
     persist(
@@ -83,7 +124,7 @@ export const useDownloadStore = create<DownloadState>()(
         }),
         {
             name: 'saimo-downloads-v1',
-            storage: createJSONStorage(() => AsyncStorage),
+            storage: armazenamentoComCalma,
             partialize: (state) => ({
                 items: state.items,
                 // Persist all non-terminal tasks.

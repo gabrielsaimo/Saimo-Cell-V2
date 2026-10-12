@@ -14,11 +14,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { loadCategory, loadMoreForCategory, categoryHasMore } from '../../services/mediaService';
+import { useShallow } from 'zustand/react/shallow';
 import { useMediaStore } from '../../stores/mediaStore';
 import type { MediaItem } from '../../types';
 import MediaCard from '../../components/MediaCard';
 import FilterBar from '../../components/FilterBar';
 import { filterMedia, sortMedia, getAllGenres } from '../../services/mediaService';
+import { plural } from '../../utils/plural';
 
 export default function CategoryScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name: string }>();
@@ -30,10 +32,15 @@ export default function CategoryScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   
-  const { 
+  // Só os filtros: com a store inteira, a tela era redesenhada a cada
+  // gravação de progresso de um filme tocando.
+  const {
     activeFilter, activeSort, activeGenre,
-    setFilter, setSort, setGenre, clearFilters 
-  } = useMediaStore();
+    setFilter, setSort, setGenre, clearFilters,
+  } = useMediaStore(useShallow((s) => ({
+    activeFilter: s.activeFilter, activeSort: s.activeSort, activeGenre: s.activeGenre,
+    setFilter: s.setFilter, setSort: s.setSort, setGenre: s.setGenre, clearFilters: s.clearFilters,
+  })));
 
   // Carregar primeira página online
   useEffect(() => {
@@ -94,7 +101,7 @@ export default function CategoryScreen() {
           <ActivityIndicator size="small" color={Colors.primary} />
         ) : (
           <Text style={styles.footerText}>
-            {filteredItems.length} títulos carregados
+            {plural(filteredItems.length, 'título carregado', 'títulos carregados')}
           </Text>
         )}
       </View>
@@ -121,7 +128,7 @@ export default function CategoryScreen() {
         <View style={styles.titleContainer}>
           <Text style={styles.title}>{name || 'Categoria'}</Text>
           <Text style={styles.count}>
-            {filteredItems.length} títulos{hasMore ? '+' : ''}
+            {plural(filteredItems.length, 'título', 'títulos')}{hasMore ? '+' : ''}
           </Text>
         </View>
         <View style={{ width: 40 }} />

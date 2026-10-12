@@ -18,6 +18,7 @@ import Video from 'react-native-video';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
+import { useShallow } from 'zustand/react/shallow';
 import { useMediaStore } from '../../stores/mediaStore';
 import { deduplicateByName } from '../../services/mediaService';
 import {
@@ -38,6 +39,7 @@ import MediaCard from '../../components/MediaCard';
 import FilterBar from '../../components/FilterBar';
 import * as telemetria from '../../services/telemetria';
 import { getAllGenres, filterMedia, sortMedia } from '../../services/mediaService';
+import { plural } from '../../utils/plural';
 
 const ADULT_CATEGORY_IDS = [
   'hot-adultos-bella-da-semana',
@@ -54,10 +56,8 @@ function isAdultContent(item: MediaItem): boolean {
   return false;
 }
 
-function mapSortToAPI(sort: string): 'rating' | 'new' | 'name' {
-  if (sort === 'name') return 'name';
-  if (sort === 'year') return 'new';
-  return 'rating';
+function mapSortToAPI(sort: string): 'new' | 'name' {
+  return sort === 'year' ? 'new' : 'name';
 }
 
 const SEARCH_DEBOUNCE = 600;
@@ -131,10 +131,15 @@ export default function MoviesScreen() {
   const [catalogTotalPages, setCatalogTotalPages] = useState(1);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
+  // Só os filtros: com a store inteira, a tela de Filmes (montada atrás do
+  // player) era redesenhada a cada gravação de progresso do filme tocando.
   const {
     activeFilter, activeSort, activeGenre,
     setFilter, setSort, setGenre, clearFilters,
-  } = useMediaStore();
+  } = useMediaStore(useShallow((s) => ({
+    activeFilter: s.activeFilter, activeSort: s.activeSort, activeGenre: s.activeGenre,
+    setFilter: s.setFilter, setSort: s.setSort, setGenre: s.setGenre, clearFilters: s.clearFilters,
+  })));
   const { adultUnlocked } = useSettingsStore();
 
   const mountedRef = useRef(true);
@@ -458,7 +463,7 @@ export default function MoviesScreen() {
           <View>
             <Text style={styles.title}>Filmes & Séries</Text>
             <Text style={styles.subtitle}>
-              {categoryData.length} categorias • {totalLoaded} títulos
+              {plural(categoryData.length, 'categoria', 'categorias')} • {plural(totalLoaded, 'título', 'títulos')}
               {bgLoading ? ' (carregando...)' : ''}
             </Text>
           </View>
@@ -518,6 +523,9 @@ export default function MoviesScreen() {
 
       {showGrid ? (
         <FlashList
+          // Tocar num pôster com o teclado aberto já abre o título (antes o
+          // primeiro toque só fechava o teclado).
+          keyboardShouldPersistTaps="handled"
           key="grid-view"
           data={gridData}
           keyExtractor={keyExtractorGrid}
@@ -542,6 +550,9 @@ export default function MoviesScreen() {
         />
       ) : (
         <FlashList
+          // Tocar num pôster com o teclado aberto já abre o título (antes o
+          // primeiro toque só fechava o teclado).
+          keyboardShouldPersistTaps="handled"
           key="category-view"
           data={categoryData}
           keyExtractor={keyExtractorCategory}

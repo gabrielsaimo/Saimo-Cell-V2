@@ -7,7 +7,6 @@ import {
   Dimensions,
   Modal,
   Alert,
-  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -33,12 +32,15 @@ const selectShowChannelNumber = (state: SettingsStore) => state.showChannelNumbe
 
 const ChannelCard = memo(({ channel }: ChannelCardProps) => {
   const router = useRouter();
-  const { toggleFavorite, isFavorite } = useFavoritesStore();
+  // Seletores e não a store inteira: assinada inteira, cada favorito marcado
+  // em qualquer lugar redesenhava todos os cartões da lista.
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
+  const ehFavorito = useFavoritesStore((s) => s.isFavorite(channel.id));
   const showEPG = useSettingsStore(selectShowEPG);
   const showChannelNumber = useSettingsStore(selectShowChannelNumber);
   const client = useRemoteMediaClient();
 
-  const [favorite, setFavorite] = useState(isFavorite(channel.id));
+  const [favorite, setFavorite] = useState(ehFavorito);
   const [currentEPG, setCurrentEPG] = useState<CurrentProgram | null>(null);
   const [showOptions, setShowOptions] = useState(false);
   const isMountedRef = useRef(true);
@@ -67,8 +69,8 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
 
   // Sincroniza estado de favorito
   useEffect(() => {
-    setFavorite(isFavorite(channel.id));
-  }, [channel.id, isFavorite]);
+    setFavorite(ehFavorito);
+  }, [ehFavorito]);
 
   const handlePress = useCallback(() => {
     router.push({
@@ -140,7 +142,6 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
             transition={0}
             cachePolicy="memory-disk"
             recyclingKey={channel.logo}
-            priority={Platform.OS === 'android' ? 'high' : undefined}
           />
         ) : (
           <View style={styles.placeholder}>

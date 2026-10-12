@@ -19,6 +19,7 @@ import { getMediaById } from '../../services/mediaService';
 import ChannelCard from '../../components/ChannelCard';
 import MediaCard from '../../components/MediaCard';
 import type { MediaItem } from '../../types';
+import { plural } from '../../utils/plural';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = (width - Spacing.lg * 3) / 2;
@@ -26,7 +27,7 @@ const CARD_WIDTH = (width - Spacing.lg * 3) / 2;
 export default function FavoritesScreen() {
   const insets = useSafeAreaInsets();
   const { favorites: channelFavorites } = useFavoritesStore();
-  const { favorites: mediaFavorites } = useMediaStore();
+  const mediaFavorites = useMediaStore((s) => s.favorites);
 
   const [favoriteMedia, setFavoriteMedia] = useState<MediaItem[]>([]);
 
@@ -66,7 +67,7 @@ export default function FavoritesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Favoritos</Text>
-        <Text style={styles.subtitle}>{totalCount} itens</Text>
+        <Text style={styles.subtitle}>{plural(totalCount, 'item', 'itens')}</Text>
       </View>
 
       {totalCount === 0 ? (

@@ -110,9 +110,8 @@
             "compileSdkVersion": 37,
             "targetSdkVersion": 37,
             "buildToolsVersion": "37.0.0",
-            "enableProguardInReleaseBuilds": true,
-            "minifyEnabled": true,
-            "shrinkResources": true,
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
             "extraProguardRules": "-dontwarn com.tencent.mmkv.MMKV"
           },
           "ios": {

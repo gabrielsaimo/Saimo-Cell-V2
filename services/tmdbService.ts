@@ -237,7 +237,8 @@ export function getTMDBData(title: string, series: boolean): Promise<Partial<TMD
       voteCount: resultado.vote_count,
       popularity: resultado.popularity,
       genres: (resultado.genre_ids || []).map((id) => GENRE_NAMES[id]).filter(Boolean),
-      poster: posterUrl(resultado.poster_path) || '',
+      // w342: o cartão desenha a uns 300 px; o w500 era 40% a mais de bytes por capa.
+      poster: posterUrl(resultado.poster_path, 'w342') || '',
       posterHD: posterUrl(resultado.poster_path, 'original'),
       backdrop: posterUrl(resultado.backdrop_path, 'w780'),
       backdropHD: posterUrl(resultado.backdrop_path, 'original'),

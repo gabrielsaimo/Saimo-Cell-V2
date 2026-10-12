@@ -1,5 +1,17 @@
 # Changelog — Saimo TV
 
+## [2.1.4] — 2026-10-12
+
+- Filmes em aparelho de pouca memória: o buffer acompanha a memória livre e a fonte pesada demais pede outra fonte em vez de reiniciar o player sem parar.
+- Progresso do filme salvo a cada 5 s sem refazer o temporizador a cada segundo; histórico e progresso de séries sem duplicatas por ID codificado.
+- Guia: cache dos programas já separados (próximas 30 h), recarga com debounce, "Recarregar Guia" em Ajustes volta a mostrar os dados, guia completo com todos os canais.
+- Filmografia do ator usa o índice inteiro do acervo; busca com toque na primeira vez com o teclado aberto.
+- Lista de canais volta ao topo ao trocar de categoria; carregando visível; pílulas de resolução só quando têm canais.
+- Link direto para canal com o app fechado; "Canal não encontrado" com botão Voltar.
+- Modo imersivo volta depois de fechar painéis e ao voltar para o app.
+- Ordenação sem as opções "Nota" e "Popular", que não funcionavam; plural certo nas contagens.
+- Menos renderizações (seletores do zustand), downloads gravados no máximo a cada 5 s, listas do acervo em arquivos, `console.log` desligado no release, atualizador checa 10 s depois de abrir.
+
 ## [2.1.1] — 2026-10-09
 
 - Atualizador não depende mais só da API do GitHub: com o limite de 60 consultas por hora estourado (comum na rede do celular, onde muita gente sai pelo mesmo IP), ele acha a versão nova pelo endereço do último release e baixa o APK pelo link direto. Também volta a checar quando o app volta para a frente, a cada 6 h no máximo.

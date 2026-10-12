@@ -17,7 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useFavoritesStore } from '../../stores/favoritesStore';
-import { clearEPGCache } from '../../services/epgService';
+import { clearEPGCache, refreshEPG } from '../../services/epgService';
 import { clearAllCaches } from '../../services/apiService';
 import PinModal from '../../components/PinModal';
 
@@ -87,6 +87,9 @@ export default function SettingsScreen() {
           style: 'default',
           onPress: async () => {
             await clearEPGCache();
+            // Apagar só não basta: sem pedir a carga, o guia ficava vazio
+            // até o app ser reaberto.
+            void refreshEPG();
             Alert.alert('Sucesso', 'Guia de TV recarregado. Os dados aparecerão em breve.');
           }
         },

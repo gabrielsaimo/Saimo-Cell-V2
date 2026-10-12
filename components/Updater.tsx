@@ -135,7 +135,12 @@ export default function Updater() {
     }
   }, [currentVersion]);
 
-  useEffect(() => { checkUpdate(); }, [checkUpdate]);
+  // Dez segundos depois de abrir: nos primeiros instantes a rede é dos
+  // canais e do guia, e o aviso de versão nova pode esperar.
+  useEffect(() => {
+    const espera = setTimeout(checkUpdate, 10_000);
+    return () => clearTimeout(espera);
+  }, [checkUpdate]);
 
   // Quem deixa o app aberto dias seguidos também fica sabendo da versão nova.
   useEffect(() => {

@@ -7,7 +7,6 @@ import {
   Dimensions,
   Modal,
   Alert,
-  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -59,8 +58,13 @@ const getRatingColor = (rating?: number) => {
 const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) => {
   const router = useRouter();
   const client = useRemoteMediaClient();
-  const { isFavorite, addFavorite, removeFavorite, getProgress, getSeriesProgress } = useMediaStore();
-  const [favorite, setFavorite] = useState(isFavorite(item.id));
+  // Seletores e não a store inteira: assinada inteira, cada gravação de
+  // progresso (a cada 5 s durante um filme) redesenhava todos os cartões.
+  const addFavorite = useMediaStore((s) => s.addFavorite);
+  const removeFavorite = useMediaStore((s) => s.removeFavorite);
+  const ehFavorito = useMediaStore((s) => s.favoriteIds.has(item.id));
+  const [favorite, setFavorite] = useState(ehFavorito);
+  useEffect(() => { setFavorite(ehFavorito); }, [ehFavorito]);
 
   // Determine active progress (movie or series)
   const hasSeries =
@@ -196,7 +200,6 @@ const MediaCard = memo(({ item, size = 'medium', cardWidth }: MediaCardProps) =>
         transition={0}
         cachePolicy="memory-disk"
         recyclingKey={item.id}
-        priority={Platform.OS === 'android' ? 'high' : undefined}
       />
       
       {/* Background Progress Fill Overlay */}

@@ -5,10 +5,10 @@ import { buscarPulos, trechoEm, inicioDosCreditos, rotuloTrecho, type Trecho } f
 import { buscarLegendas, baixarLegenda, idiomaGuardado, guardarIdioma, type LegendaOpcao } from '../../services/legendas';
 import {
     View, Text, StyleSheet, TouchableOpacity, Pressable,
-    StatusBar, BackHandler, Dimensions, ActivityIndicator,
+    StatusBar, BackHandler, Dimensions, ActivityIndicator, AppState,
     Platform, Animated, PanResponder, Modal, ScrollView, Alert,
 } from 'react-native';
-import Video, { SelectedTrackType, SelectedVideoTrackType, TextTrackType, VideoRef, type ISO639_1 } from 'react-native-video';
+import Video, { BufferingStrategyType, SelectedTrackType, SelectedVideoTrackType, TextTrackType, VideoRef, type ISO639_1 } from 'react-native-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
@@ -18,6 +18,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors, Spacing, BorderRadius } from '../../constants/Colors';
+import { useShallow } from 'zustand/react/shallow';
 import { useMediaStore } from '../../stores/mediaStore';
 import CastAction from '../../components/CastAction';
 import { useDownloadStore } from '../../stores/downloadStore';
@@ -43,6 +44,15 @@ const RESIZE_MODES = ['contain', 'cover', 'stretch'] as const;
 type ResizeMode = typeof RESIZE_MODES[number];
 const RESIZE_LABELS: Record<ResizeMode, string> = { contain: 'Normal', cover: 'Preencher', stretch: 'Esticar' };
 const SLEEP_OPTIONS = [15, 30, 45, 60] as const;
+/// Buffer dos filmes: até 30 s adiantados, limitados pela memória do aparelho.
+const BUFFER_DO_FILME = {
+    minBufferMs: 15000,
+    maxBufferMs: 30000,
+    bufferForPlaybackMs: 2500,
+    bufferForPlaybackAfterRebufferMs: 5000,
+    maxHeapAllocationPercent: 0.3,
+    minBufferMemoryReservePercent: 0.2,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -409,9 +419,11 @@ export default function MediaPlayerScreen() {
     }>();
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { addToHistory, setSeriesProgress, getProgress } = useMediaStore();
+    // Só as ações: o player não precisa redesenhar quando ele mesmo grava o progresso.
+    const { addToHistory, setSeriesProgress, getProgress } = useMediaStore(useShallow((s) => ({
+        addToHistory: s.addToHistory, setSeriesProgress: s.setSeriesProgress, getProgress: s.getProgress,
+    })));
     const client = useRemoteMediaClient();
-    const tasks = useDownloadStore((s) => s.tasks);
     const items = useDownloadStore((s) => s.items);
     const offlineItem = useMemo(() => {
         if (routeParams.offline !== '1') return undefined;
@@ -425,15 +437,10 @@ export default function MediaPlayerScreen() {
         season: offlineItem?.seasonNumber !== undefined ? String(offlineItem.seasonNumber) : routeParams.season,
     };
 
-    // Resolve remote URL for Cast even when playing an offline file
-    const castUrl = useMemo(() => {
-        if (!params.id) return null;
-        const task = tasks[params.id];
-        if (task?.remoteUrl) return task.remoteUrl;
-        const item = items[params.id];
-        // items don't store remoteUrl but tasks do — just in case
-        return null;
-    }, [params.id, tasks, items]);
+    // Resolve remote URL for Cast even when playing an offline file. Só o
+    // endereço da tarefa deste título: assinar todas as tarefas redesenhava o
+    // player a cada atualização de progresso de qualquer download.
+    const castUrl = useDownloadStore((s) => (params.id ? s.tasks[params.id]?.remoteUrl : undefined)) ?? null;
 
     const rawUrl = params.url || '';
     const decodedUrl = rawUrl ? decodeURIComponent(rawUrl) : '';
@@ -608,6 +615,8 @@ export default function MediaPlayerScreen() {
     /** Onde retomar depois de refazer o player para trocar a legenda. */
     const retomarEmRef = useRef<number | null>(null);
     const currentTimeRef = useRef(0);
+    const durationRef = useRef(0);
+    useEffect(() => { durationRef.current = duration; }, [duration]);
     const [selectedVideo, setSelectedVideo] = useState<number | null>(null);
     const [showAudioSheet, setShowAudioSheet] = useState(false);
     const [showTextSheet, setShowTextSheet] = useState(false);
@@ -638,10 +647,18 @@ export default function MediaPlayerScreen() {
     const hasFetchedFreshUrl = useRef(false);
 
     // ── Save progress periodically ────────────────────────────────────────
+    // O tempo é lido das refs dentro do intervalo. Com `currentTime` nas
+    // dependências, o efeito era refeito a cada atualização do player (2 por
+    // segundo) e o intervalo de 5 s nunca chegava a disparar: o progresso só
+    // era gravado ao sair, e um app fechado à força perdia onde parou.
+    const temDuracao = duration > 0;
     useEffect(() => {
-        if (!params.id || duration <= 0 || currentTime <= 0 || paused) return;
+        if (!params.id || !temDuracao || paused) return;
 
         const interval = setInterval(() => {
+            const currentTime = currentTimeRef.current;
+            const duration = durationRef.current;
+            if (currentTime <= 0 || duration <= 0) return;
             addToHistory(params.id, currentTime, duration);
 
             // If it's a series, also update series-level progress
@@ -660,7 +677,7 @@ export default function MediaPlayerScreen() {
         }, 5000);
 
         return () => clearInterval(interval);
-    }, [params.id, params.seriesId, params.season, params.nextEpisode, offlineItem?.episodeNumber, currentTime, duration, paused, addToHistory, setSeriesProgress]);
+    }, [params.id, params.seriesId, params.season, params.nextEpisode, offlineItem?.episodeNumber, temDuracao, paused, addToHistory, setSeriesProgress]);
 
     // ─────────────────────────────────────────────────────────────────────
     // Fullscreen / lifecycle
@@ -719,6 +736,29 @@ export default function MediaPlayerScreen() {
         return () => sub.remove();
     }, [locked, showSpeed, showSleep, showAudioSheet, showTextSheet, showVideoSheet, showSourceSheet]);
 
+    // A janela de um painel (velocidade, legendas, fonte…) e a volta do PiP
+    // trazem as barras do sistema de volta por cima do vídeo: some com elas.
+    const algumPainel = showSpeed || showSleep || showAudioSheet || showTextSheet || showVideoSheet || showSourceSheet;
+    useEffect(() => {
+        if (Platform.OS !== 'android' || algumPainel) return;
+        // Depois da janela do painel terminar de fechar: ela devolve as barras
+        // ao sair, por cima de um pedido feito antes.
+        const espera = setTimeout(() => {
+            StatusBar.setHidden(true);
+            NavigationBar.setVisibilityAsync('hidden').catch(() => {});
+        }, 400);
+        return () => clearTimeout(espera);
+    }, [algumPainel]);
+    useEffect(() => {
+        if (Platform.OS !== 'android') return;
+        const assinatura = AppState.addEventListener('change', (estado) => {
+            if (estado !== 'active') return;
+            StatusBar.setHidden(true);
+            NavigationBar.setVisibilityAsync('hidden').catch(() => {});
+        });
+        return () => assinatura.remove();
+    }, []);
+
     // ─────────────────────────────────────────────────────────────────────
     // URL resolution + strategy
     // ─────────────────────────────────────────────────────────────────────
@@ -729,8 +769,10 @@ export default function MediaPlayerScreen() {
         setPlaybackSources(sourceUrls);
         setSelectedSource(0);
         setActiveUrl(sourceUrls[0]);
+        // Com mais de uma fonte, a escolha aparece por cima — mas a Fonte 1 já
+        // vai carregando. Antes o filme ficava parado até alguém escolher, e
+        // escolher a própria Fonte 1 ainda recriava o player (mais 4 s).
         if (!isOffline && sourceUrls.length > 1) {
-            setPaused(true);
             setShowSourceSheet(true);
         }
         if (isOffline) { setResolvedUrl(sourceUrls[0]); return; }
@@ -964,11 +1006,24 @@ export default function MediaPlayerScreen() {
         if (label) setResolution(label);
     }, []);
 
-    const onError = useCallback((_err: any) => {
+    const onError = useCallback((err: any) => {
         if (!isMountedRef.current) return;
         setIsLoading(false);
+        // Falta de memória não é fonte ruim: trocar de cabeçalho ou de fonte
+        // recriava o player vinte vezes seguidas (45 s de rede e CPU) sem
+        // chance de tocar. É o vídeo pesado demais para este aparelho.
+        if (JSON.stringify(err ?? '').includes('OutOfMemory')) {
+            const m = monitorRef.current;
+            if (m) telemetria.falhou('vod', m.titulo, m.url, sourceIndexRef.current + 1, 'sem memória');
+            setHasError(true);
+            setErrorMsg(playbackSources.length > 1
+                ? 'Esta fonte tem qualidade alta demais para este aparelho. Escolha outra fonte.'
+                : 'Esta fonte tem qualidade alta demais para este aparelho.');
+            if (playbackSources.length > 1) setShowSourceSheet(true);
+            return;
+        }
         tryNextStrategy();
-    }, [tryNextStrategy]);
+    }, [tryNextStrategy, playbackSources.length]);
 
     // ─── Monitor ───
     const monitorRef = useRef<{ titulo: string; url: string; desde: number; avisado: boolean } | null>(null);
@@ -1139,10 +1194,8 @@ export default function MediaPlayerScreen() {
         setPlaybackSources(nextList);
         sourceIndexRef.current = 0;
         setSelectedSource(0);
-        if (nextList.length > 1) {
-            setPaused(true);
-            setShowSourceSheet(true);
-        }
+        // O episódio seguinte segue direto na primeira fonte: abrir a escolha
+        // aqui parava a maratona a cada episódio. Trocar continua no botão Fonte.
         setVideoKey((k) => k + 1);
     }, [resolvedNextEpisode, params.seriesId, params.season, params.nextSources, setSeriesProgress, isOffline, items, router]);
     handleNextEpisodeRef.current = handleNextEpisode;
@@ -1299,6 +1352,12 @@ export default function MediaPlayerScreen() {
         const index = typeof id === 'number' ? id : Number(id);
         const url = playbackSources[index];
         if (!url) return;
+        // A fonte que já está tocando ou carregando: só fecha a escolha.
+        if (index === sourceIndexRef.current && !hasError) {
+            setShowSourceSheet(false);
+            setPaused(false);
+            return;
+        }
         sourceIndexRef.current = index;
         setSelectedSource(index);
         setActiveUrl(url);
@@ -1314,7 +1373,7 @@ export default function MediaPlayerScreen() {
         setIsLoading(true);
         setPaused(false);
         setVideoKey((key) => key + 1);
-    }, [playbackSources]);
+    }, [playbackSources, hasError]);
 
     // ─────────────────────────────────────────────────────────────────────
     // Render
@@ -1360,12 +1419,12 @@ export default function MediaPlayerScreen() {
                     onBandwidthUpdate={onBandwidthUpdate}
                     reportBandwidth={true}
                     onPictureInPictureStatusChanged={onPictureInPictureStatusChanged}
-                    bufferConfig={{
-                        minBufferMs: 15000,
-                        maxBufferMs: 50000,
-                        bufferForPlaybackMs: 2500,
-                        bufferForPlaybackAfterRebufferMs: 5000,
-                    }}
+                    // O buffer cabe na memória do aparelho: sem teto, um filme
+                    // em 2K ocupava 70 MB do heap Java e estourava num celular
+                    // de 48 MB. A biblioteca só olha a memória com
+                    // DependingOnMemory: até 30% do heap, com 20% de folga.
+                    bufferingStrategy={BufferingStrategyType.DEPENDING_ON_MEMORY}
+                    bufferConfig={BUFFER_DO_FILME}
                     progressUpdateInterval={500}
                 />
             ) : null}

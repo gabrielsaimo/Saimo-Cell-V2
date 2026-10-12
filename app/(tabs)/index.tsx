@@ -20,6 +20,7 @@ import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
 import EPGGuideModal from '../../components/EPGGuideModal';
 import * as telemetria from '../../services/telemetria';
+import { plural } from '../../utils/plural';
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
@@ -40,17 +41,21 @@ export default function HomeScreen() {
     channels: remoteChannels,
     fetchChannels,
     vigiarFontesDesativadas,
+    carregou: listaCarregou,
   } = useChannelStore();
   
   const { favorites } = useFavoritesStore();
   const { adultUnlocked, unlockAdult, showEPG } = useSettingsStore();
 
-  // Auto-init EPG se habilitado nas configurações
+  // Auto-init EPG se habilitado nas configurações. Só depois que os canais
+  // chegam: antes disso a carga varria o arquivo inteiro para zero canais e
+  // era refeita logo em seguida.
+  const temCanais = remoteChannels.length > 0;
   useEffect(() => {
-    if (showEPG && !isEPGLoaded()) {
+    if (showEPG && temCanais && !isEPGLoaded()) {
       initEPGService();
     }
-  }, [showEPG]);
+  }, [showEPG, temCanais]);
 
   // Memoize categories to prevent re-creation on every render
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,16 +141,23 @@ export default function HomeScreen() {
         <View style={styles.headerTop}>
           <View>
             <Text style={styles.title}>Saimo TV</Text>
-            <Text style={styles.subtitle}>{channels.length} canais</Text>
+            <Text style={styles.subtitle}>{plural(channels.length, 'canal', 'canais')}</Text>
           </View>
           <View style={styles.headerActions}>
             <TouchableOpacity
               style={styles.searchButton}
               onPress={() => setShowEPGGuide(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Guia de programação"
             >
               <Ionicons name="calendar-outline" size={22} color={Colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.searchButton} onPress={toggleSearch}>
+            <TouchableOpacity
+              style={styles.searchButton}
+              onPress={toggleSearch}
+              accessibilityRole="button"
+              accessibilityLabel={showSearch ? 'Fechar busca' : 'Buscar canal'}
+            >
               <Ionicons
                 name={showSearch ? 'close' : 'search'}
                 size={24}
@@ -206,7 +218,7 @@ export default function HomeScreen() {
 
       {/* Channel List */}
       <View style={[styles.content, { paddingBottom: insets.bottom + 60 }]}>
-        <ChannelList channels={channels} />
+        <ChannelList channels={channels} carregando={!listaCarregou} />
       </View>
 
       <PinModal

@@ -5,7 +5,7 @@
 </p>
 
 Canais ao vivo, guia de programação, filmes e séries no celular. Versão atual:
-**2.1.1**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
+**2.1.4**. Expo SDK 57, React Native 0.86, React 19.2, react-native-video.
 
 O APK (`SaimoCell.apk`) sai no release único de
 [SaimoPlayer](https://github.com/gabrielsaimo/SaimoPlayer/releases/latest); o
@@ -19,7 +19,10 @@ app confere esse release e oferece a atualização sozinho.
 - **Guia de programação** por canal (XMLTV do iptv-epg.org e da Pluto TV).
   O XML vai direto para o disco e é lido em blocos de 256 KB
   (`services/epgService.ts`); só os programas dos canais do app ficam na
-  memória, então o guia de ~16 MB não derruba aparelho de heap pequeno
+  memória, então o guia de ~16 MB não derruba aparelho de heap pequeno.
+  Os programas das próximas 30 h ficam salvos já separados
+  (`epg-processado.json`, até 8 MB), e a próxima abertura mostra o guia sem
+  reler o XML
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com
   ficha, episódios, atores e escolha de fonte
 - **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
@@ -34,6 +37,14 @@ app confere esse release e oferece a atualização sozinho.
 - **Janela flutuante** (picture-in-picture) no player ao vivo, no Android
 - **Downloads** para ver sem internet, com notificação de andamento
 - **Chromecast**, favoritos e busca
+- **Pouca memória:** o buffer dos players cresce conforme a memória livre
+  (`BufferingStrategyType.DEPENDING_ON_MEMORY`); fonte de filme pesada demais
+  para o aparelho abre a escolha de fonte em vez de reiniciar o player. As
+  listas do acervo ficam em arquivos (`Paths.cache/saimo-listas/`), não no
+  AsyncStorage, e no release `console.log` não faz nada
+  (`services/semLogs.ts`)
+- **Link direto** `saimo://player/<canal>` funciona com o app fechado: a lista
+  de canais é baixada antes de abrir o player
 - Versão mostrada em Ajustes e usada pelo atualizador lida do próprio app
   (`app.json`)
 

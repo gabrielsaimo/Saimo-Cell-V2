@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Paths, File as FSFile, Directory } from 'expo-file-system';
 
 import type { Channel, ChannelStream, MediaItem, TMDBData } from '../types';
 
@@ -103,10 +104,32 @@ function cacheKey(name: string): string {
   return `${CACHE_PREFIX}${name.replace(/[^a-zA-Z0-9_.#-]/g, '_')}`;
 }
 
+/**
+ * As listas baixadas ficam em arquivos, um por lista, e não no AsyncStorage.
+ *
+ * O AsyncStorage do Android tem 6 MB no total e estas listas já ocupavam 5,3:
+ * o índice de busca e as fichas (4,8 MB juntos) nem cabiam mais — a gravação
+ * falhava calada e eles eram baixados de novo a cada abertura — e o que
+ * sobrava ficava apertado para favoritos e histórico. A data do arquivo é a
+ * data da cópia.
+ */
+function arquivoDaLista(name: string): FSFile {
+  const pasta = new Directory(Paths.cache, 'saimo-listas');
+  if (!pasta.exists) pasta.create({ intermediates: true, idempotent: true });
+  return new FSFile(pasta, cacheKey(name).slice(CACHE_PREFIX.length));
+}
+
 async function readCache(name: string): Promise<CachedText | null> {
   try {
+    const arquivo = arquivoDaLista(name);
+    if (arquivo.exists) return { savedAt: arquivo.lastModified ?? 0, text: arquivo.textSync() };
+    // Cópia de antes da 2.1.4, no AsyncStorage: passa para o arquivo e sai de lá.
     const raw = await AsyncStorage.getItem(cacheKey(name));
-    return raw ? (JSON.parse(raw) as CachedText) : null;
+    if (!raw) return null;
+    const antiga = JSON.parse(raw) as CachedText;
+    await AsyncStorage.removeItem(cacheKey(name));
+    if (antiga?.text?.trim()) arquivo.write(antiga.text);
+    return antiga;
   } catch {
     return null;
   }
@@ -114,7 +137,7 @@ async function readCache(name: string): Promise<CachedText | null> {
 
 async function writeCache(name: string, text: string): Promise<void> {
   try {
-    await AsyncStorage.setItem(cacheKey(name), JSON.stringify({ savedAt: Date.now(), text }));
+    arquivoDaLista(name).write(text);
   } catch {
     // A resposta da rede continua válida mesmo quando o aparelho está sem espaço.
   }
@@ -623,6 +646,18 @@ export async function getVodItem(id: string): Promise<MediaItem> {
 
 let searchIndex: VodSearchEntry[] | null = null;
 
+/// Nome e ano já normalizados, guardados na própria entrada: a normalização
+/// rodava para os 32 mil títulos a cada letra digitada na busca.
+const chavesDeBusca = new WeakMap<VodSearchEntry, string>();
+function chaveDeBusca(entry: VodSearchEntry): string {
+  let chave = chavesDeBusca.get(entry);
+  if (chave === undefined) {
+    chave = normalise(`${entry.title} ${entry.year}`);
+    chavesDeBusca.set(entry, chave);
+  }
+  return chave;
+}
+
 async function loadSearchIndex(): Promise<VodSearchEntry[]> {
   if (searchIndex) return searchIndex;
   const text = await fetchText(`${SAIMO_VOD_BASE}busca.txt`, 'vod-busca.txt');
@@ -634,23 +669,34 @@ async function loadSearchIndex(): Promise<VodSearchEntry[]> {
   return searchIndex;
 }
 
-export async function searchVod(query: string, type?: 'movie' | 'series'): Promise<MediaItem[]> {
+/**
+ * Títulos do índice que batem com a busca. `limite` corta a lista que vai
+ * para a tela; quem precisa do índice inteiro (a filmografia de um ator, que
+ * cruza por nome com todo o acervo) pede sem limite — com o corte em 500,
+ * só os primeiros títulos em ordem alfabética entravam, e o elenco de quase
+ * todo mundo aparecia vazio.
+ */
+export async function searchVod(query: string, type?: 'movie' | 'series', limite = 500): Promise<MediaItem[]> {
   const wanted = normalise(query);
   const index = await loadSearchIndex();
   return index
     .filter(entry => (!type || (entry.series ? 'series' : 'movie') === type))
-    .filter(entry => !wanted || normalise(`${entry.title} ${entry.year}`).includes(wanted))
-    .slice(0, 500)
-    .map(entry => ({
-      id: makeVodId(entry.series ? 'series' : 'movie', entry.letter, entry.title, entry.year),
-      name: entry.title,
-      url: '',
-      category: `${entry.series ? 'series' : 'filmes'}-${entry.letter}`,
-      categoryLabel: `${entry.series ? 'Séries' : 'Filmes'} • ${entry.letter}`,
-      type: entry.series ? 'tv' : 'movie',
-      isAdult: false,
-      tmdb: basicTmdb(entry.title, entry.year),
-    }));
+    .filter(entry => !wanted || chaveDeBusca(entry).includes(wanted))
+    .slice(0, limite)
+    .map(itemDaBusca);
+}
+
+function itemDaBusca(entry: VodSearchEntry): MediaItem {
+  return {
+    id: makeVodId(entry.series ? 'series' : 'movie', entry.letter, entry.title, entry.year),
+    name: entry.title,
+    url: '',
+    category: `${entry.series ? 'series' : 'filmes'}-${entry.letter}`,
+    categoryLabel: `${entry.series ? 'Séries' : 'Filmes'} • ${entry.letter}`,
+    type: entry.series ? 'tv' : 'movie',
+    isAdult: false,
+    tmdb: basicTmdb(entry.title, entry.year),
+  };
 }
 
 export async function clearSaimoSourceCache(): Promise<void> {
@@ -660,6 +706,10 @@ export async function clearSaimoSourceCache(): Promise<void> {
   const keys = await AsyncStorage.getAllKeys();
   const sourceKeys = keys.filter(key => key.startsWith(CACHE_PREFIX));
   if (sourceKeys.length) await AsyncStorage.multiRemove(sourceKeys);
+  try {
+    const pasta = new Directory(Paths.cache, 'saimo-listas');
+    if (pasta.exists) pasta.delete();
+  } catch {}
 }
 
 /**
@@ -795,13 +845,12 @@ export function idDaFicha(fichas: Fichas, titulo: string, serie: boolean): numbe
 export async function filmografiaNoAcervo(
   creditos: { id: number; serie: boolean }[],
 ): Promise<MediaItem[]> {
-  const fichas = await loadFichas();
-  const [filmes, series] = await Promise.all([searchVod('', 'movie'), searchVod('', 'series')]);
-  const porNome = new Map<string, MediaItem>();
-  for (const item of [...filmes, ...series]) {
-    const marca = item.type === 'tv' ? 's' : 'f';
-    porNome.set(`${marca}|${item.name}`, item);
-  }
+  const [fichas, indice] = await Promise.all([loadFichas(), loadSearchIndex()]);
+  // O índice inteiro, por nome — com o corte da busca da tela (500), só os
+  // primeiros títulos em ordem alfabética entravam e o elenco de quase todo
+  // mundo aparecia vazio. Só os achados viram item.
+  const porNome = new Map<string, VodSearchEntry>();
+  for (const entry of indice) porNome.set(`${entry.series ? 's' : 'f'}|${entry.title}`, entry);
 
   const vistos = new Set<string>();
   const saida: MediaItem[] = [];
@@ -809,9 +858,11 @@ export async function filmografiaNoAcervo(
     const titulo = fichas.porId.get(credito.serie ? -credito.id : credito.id);
     if (!titulo) continue;
     const marca = credito.serie ? 's' : 'f';
-    const item = porNome.get(`${marca}|${titulo}`)
+    const achado = porNome.get(`${marca}|${titulo}`)
       ?? porNome.get(`${marca}|${semAnoNoFim(titulo)}`);
-    if (!item || vistos.has(item.id)) continue;
+    if (!achado) continue;
+    const item = itemDaBusca(achado);
+    if (vistos.has(item.id)) continue;
     vistos.add(item.id);
     const capa = fichas.capas.get(`${marca}|${titulo}`)
       ?? fichas.capas.get(`${marca}|${semAnoNoFim(titulo)}`);

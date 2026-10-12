@@ -28,11 +28,11 @@ const FILTER_OPTIONS: { value: MediaFilterType; label: string; icon: string }[] 
   { value: 'tv', label: 'Séries', icon: 'tv' },
 ];
 
+// "Nota" e "Popular" saíram: o índice do acervo não traz nota nem
+// popularidade, e as duas mostravam a mesma ordem alfabética do "A-Z".
 const SORT_OPTIONS: { value: MediaSortType; label: string }[] = [
-  { value: 'rating', label: 'Nota' },
-  { value: 'year', label: 'Ano' },
   { value: 'name', label: 'A-Z' },
-  { value: 'popularity', label: 'Popular' },
+  { value: 'year', label: 'Ano' },
 ];
 
 const FilterBar = memo(({
