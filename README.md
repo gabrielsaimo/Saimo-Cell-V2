@@ -23,6 +23,10 @@ app confere esse release e oferece a atualização sozinho.
   Os programas das próximas 30 h ficam salvos já separados
   (`epg-processado.json`, até 8 MB), e a próxima abertura mostra o guia sem
   reler o XML
+- **Eventos** (`services/eventos.ts`), como no TV Box: a agenda da embedtv
+  com os placares da ESPN, só jogos que passam em algum canal da lista, em
+  grupos (ao vivo agora, começa em breve, hoje, amanhã, próximos dias); placar
+  e tempo de jogo atualizam a cada minuto com a aba aberta, e tocar abre o canal
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com
   ficha, episódios, atores e escolha de fonte
 - **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com

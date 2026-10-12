@@ -2,6 +2,7 @@
 
 ## [2.1.4] — 2026-10-12
 
+- Aba Eventos como a do TV Box: jogos que passam nos canais da lista, com placar e tempo de jogo ao vivo, logo do canal e grupos por horário.
 - Filmes em aparelho de pouca memória: o buffer acompanha a memória livre e a fonte pesada demais pede outra fonte em vez de reiniciar o player sem parar.
 - Progresso do filme salvo a cada 5 s sem refazer o temporizador a cada segundo; histórico e progresso de séries sem duplicatas por ID codificado.
 - Guia: cache dos programas já separados (próximas 30 h), recarga com debounce, "Recarregar Guia" em Ajustes volta a mostrar os dados, guia completo com todos os canais.
