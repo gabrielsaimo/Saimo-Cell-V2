@@ -756,6 +756,9 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             </View>
             <View style={styles.menuSeparator} />
 
+            {/* Com o player deitado o painel tem uns 290 pt de altura e as
+                opções não cabem: todas as páginas rolam, não só a de fontes. */}
+            <ScrollView style={styles.menuRolagem} bounces={false}>
             {menuPage === 'main' && (
               <>
                 <TouchableOpacity style={styles.menuItem} onPress={() => { handleToggleFavorite(); setShowMenu(false); }}>
@@ -816,7 +819,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
             )}
 
             {menuPage === 'fontes' && (
-              <ScrollView style={{ maxHeight: 360 }}>
+              <>
                 {(activeChannel.streams ?? []).map((stream, i) => (
                   <TouchableOpacity
                     key={`${i}-${stream.url}`}
@@ -836,7 +839,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </ScrollView>
+              </>
             )}
 
             {menuPage === 'audio' && audioTracks.map((track: any, i: number) => (
@@ -889,6 +892,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
                 </TouchableOpacity>
               );
             })}
+            </ScrollView>
           </Pressable>
         </Pressable>
       )}
@@ -1027,6 +1031,7 @@ const styles = StyleSheet.create({
   menuChannelName: { flex: 1, color: Colors.text, fontSize: Typography.h3.fontSize, fontWeight: '700' },
   menuBackButton: { padding: 6, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.08)' },
   menuSeparator: { height: 1, backgroundColor: 'rgba(255,255,255,0.07)' },
+  menuRolagem: { flexGrow: 0, flexShrink: 1 },
   menuItem: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.md,
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,

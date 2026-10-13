@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   FlatList,
   ScrollView,
-  Dimensions,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -22,8 +22,6 @@ import { getAllChannels } from '../data/channels';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useChannelStore } from '../stores/channelStore';
 import { plural } from '../utils/plural';
-
-const { height } = Dimensions.get('window');
 
 // ─── EPG Row ────────────────────────────────────────────────────────────────
 
@@ -250,6 +248,16 @@ interface EPGGuideModalProps {
 
 export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGGuideModalProps) {
   const insets = useSafeAreaInsets();
+  // A altura vem da tela de agora, não da de quando o app abriu: com o canal
+  // aberto o player fica deitado (~360 pt de altura) e os 88% da tela em pé
+  // passavam do topo, escondendo o cabeçalho e a busca. Deitado, o painel
+  // também fica mais estreito e centralizado, para as linhas não esticarem.
+  const { width: larguraTela, height: alturaTela } = useWindowDimensions();
+  const deitado = larguraTela > alturaTela;
+  const tamanhoDoPainel = {
+    height: Math.min(alturaTela * 0.88, alturaTela - insets.top - Spacing.sm),
+    ...(deitado ? { width: Math.min(larguraTela, 720), alignSelf: 'center' as const } : null),
+  };
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const adultUnlocked = useSettingsStore((s) => s.adultUnlocked);
@@ -315,6 +323,7 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
       animationType={Platform.select({ android: 'fade', ios: 'slide' })}
       transparent
       statusBarTranslucent
+      supportedOrientations={['portrait', 'landscape']}
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
@@ -329,6 +338,7 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
         <View
           style={[
             styles.sheet,
+            tamanhoDoPainel,
             { paddingBottom: insets.bottom + Spacing.sm },
           ]}
         >
@@ -428,8 +438,6 @@ export default function EPGGuideModal({ visible, onClose, onChannelPress }: EPGG
   );
 }
 
-const SHEET_HEIGHT = height * 0.88;
-
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
@@ -440,7 +448,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
   },
   sheet: {
-    height: SHEET_HEIGHT,
     backgroundColor: Colors.cardBg,
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
