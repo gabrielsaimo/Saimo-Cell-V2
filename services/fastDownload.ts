@@ -2,7 +2,23 @@
 // Falls back to legacy single-connection if server lacks Range support or file is small.
 
 import { File } from 'expo-file-system';
+
 import * as FileSystemLegacy from 'expo-file-system/legacy';
+
+/**
+ * O destino como endereço que a API nova de arquivos aceita.
+ *
+ * Os caminhos levam o id do título ("saimo|m|M|Matchbox%20-%20O%20Filme|"),
+ * e o `File` recusa o "|" ("Illegal character in path"): todo download em
+ * pedaços morria antes do primeiro byte, e só baixava o servidor que não
+ * informa o tamanho (esse vai pela API antiga, por uma conexão só). A API
+ * antiga lê o mesmo caminho como endereço, decodificando os "%XX"; por isso
+ * aqui só os caracteres proibidos em endereço são codificados e os "%XX"
+ * ficam como estão, apontando para o mesmo arquivo em disco.
+ */
+function enderecoDoArquivo(caminho: string): string {
+    return caminho.replace(/[|\s"<>^`{}\\]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));
+}
 
 /** Read on-disk file size (0 if missing, -1 if error reading). */
 async function getFileSizeOnDisk(path: string): Promise<number> {
@@ -424,7 +440,7 @@ export class FastDownload {
 
         // Open file handle ONCE per chunk and keep it open across all reader.read() calls.
         // Previous code opened/closed handle per ~16KB chunk = massive syscall overhead.
-        const file = new File(this.destPath);
+        const file = new File(enderecoDoArquivo(this.destPath));
         const handle = file.open();
         const reader = res.body.getReader();
 
@@ -501,7 +517,7 @@ export class FastDownload {
 
         // Create file if it doesn't exist (no-op if it already does)
         const info = await FileSystemLegacy.getInfoAsync(this.destPath);
-        const file = new File(this.destPath);
+        const file = new File(enderecoDoArquivo(this.destPath));
         if (!info.exists) {
             try {
                 file.create();
@@ -527,7 +543,7 @@ export class FastDownload {
     }
 
     private writeAt(offset: number, bytes: Uint8Array): void {
-        const file = new File(this.destPath);
+        const file = new File(enderecoDoArquivo(this.destPath));
         const handle = file.open();
         try {
             handle.offset = offset;
