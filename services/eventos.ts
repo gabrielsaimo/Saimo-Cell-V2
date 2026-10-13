@@ -55,6 +55,26 @@ async function json(url: string): Promise<any | null> {
     }
 }
 
+/**
+ * Escudos e logos da agenda vêm do CDN do 365scores pedidos em 24 ou 34 px
+ * (`w_24,h_24`, 48 px com `dpr_2`) e em qualidade econômica: borrados no
+ * cartão. O CDN monta a imagem pelo endereço, então pedir 256 px e qualidade
+ * máxima traz o original (350 a 415 px); `c_limit` nunca amplia além dele.
+ */
+export function emAltaResolucao(url: string): string {
+    const marca = 'imagecache.365scores.com/image/upload/';
+    const pos = url.indexOf(marca);
+    if (pos < 0) return url;
+    const inicio = pos + marca.length;
+    const barra = url.indexOf('/', inicio);
+    const fim = barra < 0 ? url.length : barra;
+    const ajustes = url.slice(inicio, fim).split(',').map(p =>
+        p.startsWith('w_') ? 'w_256'
+            : p.startsWith('h_') ? 'h_256'
+                : p === 'q_auto:eco' ? 'q_auto:best' : p).join(',');
+    return url.slice(0, inicio) + ajustes + url.slice(fim);
+}
+
 /** O canal pelo fim do endereço do player ("…/premiere-fc" é o Premiere FC). */
 function canalDo(url: string, canais: Channel[]): Channel | undefined {
     const slug = (url.split('/').pop() ?? '').toLowerCase().replace(/[- ]/g, '');
@@ -78,8 +98,9 @@ function lerAgenda(arr: any, canais: Channel[]): Jogo[] {
             const fimLido = o.time_end ? new Date(o.time_end).getTime() : NaN;
             const j: Jogo = {
                 casa: o.teams.home.name, fora: o.teams.away.name,
-                casaLogo: o.teams.home.image ?? '', foraLogo: o.teams.away.image ?? '',
-                liga: o.league?.name ?? '', ligaLogo: o.league?.image ?? '',
+                casaLogo: emAltaResolucao(o.teams.home.image ?? ''),
+                foraLogo: emAltaResolucao(o.teams.away.image ?? ''),
+                liga: o.league?.name ?? '', ligaLogo: emAltaResolucao(o.league?.image ?? ''),
                 inicio, fim: isNaN(fimLido) ? inicio + 2 * HORA : fimLido,
                 canal, estado: '', placar: '', tempo: '',
             };
