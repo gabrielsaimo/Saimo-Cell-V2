@@ -24,7 +24,8 @@ app confere esse release e oferece a atualização sozinho.
   (`epg-processado.json`, até 8 MB), e a próxima abertura mostra o guia sem
   reler o XML
 - **Eventos** (`services/eventos.ts`), como no TV Box: a agenda da embedtv
-  com os placares da ESPN, só jogos que passam em algum canal da lista, em
+  e a do monitor (`/v1/eventos`, canais de streaming como CazéTV, Disney+, Prime,
+  Paramount+, GOAT, ge tv, N Sports e SportyNet, sem repetir) com os placares da ESPN, só jogos que passam em algum canal da lista, em
   grupos (ao vivo agora, começa em breve, hoje, amanhã, próximos dias); placar
   e tempo de jogo atualizam a cada minuto com a aba aberta, e tocar abre o canal
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com

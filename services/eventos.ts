@@ -2,9 +2,11 @@
  * Os jogos de hoje e dos próximos dias que passam em algum canal da lista,
  * com a mesma lógica da tela de Eventos do TV Box.
  *
- * Duas fontes: a agenda da embedtv diz em que canal cada jogo passa; os
- * placares da ESPN dizem se já começou, o placar e o tempo de jogo, e trazem
- * escudos melhores. Só entra jogo que tem canal (sem canal não há o que
+ * Três fontes: a agenda da embedtv diz em que canal cada jogo passa; a do
+ * monitor traz os jogos dos canais de streaming (CazéTV, Disney+, Prime,
+ * Paramount+, GOAT, ge tv, N Sports, SportyNet) que a embedtv não tem, no
+ * mesmo formato e com placar; os placares da ESPN dizem se já começou, o
+ * placar e o tempo de jogo, e trazem escudos melhores. Só entra jogo que tem canal (sem canal não há o que
  * assistir), e jogo encerrado sai.
  */
 import type { Channel } from '../types';
@@ -30,6 +32,7 @@ export const aoVivo = (j: Jogo, agora: number) =>
 export const acabou = (j: Jogo, agora: number) => j.estado === 'post' || agora > j.fim;
 
 const EMBED = 'https://embedtv.cc/api/events';
+const STREAMING = 'https://saimo-monitor.gabrielsaimo68.workers.dev/v1/eventos';
 const ESPN = [
     'soccer/bra.1', 'soccer/bra.2', 'soccer/bra.copa_do_brazil', 'soccer/conmebol.libertadores',
     'soccer/conmebol.sudamericana', 'soccer/uefa.champions', 'soccer/uefa.europa', 'soccer/eng.1',
@@ -102,7 +105,9 @@ function lerAgenda(arr: any, canais: Channel[]): Jogo[] {
                 foraLogo: emAltaResolucao(o.teams.away.image ?? ''),
                 liga: o.league?.name ?? '', ligaLogo: emAltaResolucao(o.league?.image ?? ''),
                 inicio, fim: isNaN(fimLido) ? inicio + 2 * HORA : fimLido,
-                canal, estado: '', placar: '', tempo: '',
+                canal,
+                // Só a agenda do monitor manda o placar; a ESPN, quando acha o jogo, vale mais.
+                estado: o.estado ?? '', placar: o.placar ?? '', tempo: o.tempo ?? '',
             };
             const chave = `${j.casa} x ${j.fora}|${j.inicio}`;
             if (vistos.has(chave)) continue;
@@ -151,13 +156,21 @@ function mesmoTime(a: string, b: string): boolean {
 
 /** null quando a agenda não veio. */
 export async function buscarJogos(canais: Channel[]): Promise<Jogo[] | null> {
-    const [agenda, ...placares] = await Promise.all([
+    const [agenda, streaming, ...placares] = await Promise.all([
         json(EMBED),
+        json(STREAMING),
         ...ESPN.map(l => json(`https://site.api.espn.com/apis/site/v2/sports/${l}/scoreboard`)),
     ]);
     if (!agenda) return null;
     const espn = placares.filter(Boolean).flatMap(lerEspn);
-    return lerAgenda(agenda, canais).map(jogo => {
+    const daEmbed = lerAgenda(agenda, canais);
+    // Jogo do monitor que a embedtv já tem (mesmos times, começo a menos de
+    // meia hora) não entra de novo.
+    const extras = lerAgenda(streaming, canais).filter(x => !daEmbed.some(e =>
+        Math.abs(e.inicio - x.inicio) < HORA / 2 &&
+        ((mesmoTime(e.casa, x.casa) && mesmoTime(e.fora, x.fora)) ||
+            (mesmoTime(e.casa, x.fora) && mesmoTime(e.fora, x.casa)))));
+    return [...daEmbed, ...extras].map(jogo => {
         // O mesmo jogo na ESPN: mesmos times (em qualquer ordem) e começo
         // a menos de quatro horas um do outro.
         const par = espn.find(e =>
