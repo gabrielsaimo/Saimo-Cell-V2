@@ -10,6 +10,7 @@ import * as Notifications from 'expo-notifications';
 import { Colors } from '../constants/Colors';
 
 import Updater from '../components/Updater';
+import Abertura from '../components/Abertura';
 import { downloadManager } from '../services/downloadManager';
 import { useDownloadStore } from '../stores/downloadStore';
 import { initNotifications } from '../services/downloadNotifications';
@@ -103,6 +104,8 @@ export default function RootLayout() {
           }}
         />
       </Stack>
+      {/* Por cima de tudo, só na partida a frio: o app monta por baixo. */}
+      <Abertura />
     </SafeAreaProvider>
   );
 }

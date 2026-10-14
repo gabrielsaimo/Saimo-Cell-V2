@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/images/saimo_tv_logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0A0A0F"
+      "backgroundColor": "#0B0F2A"
     },
     "ios": {
       "supportsTablet": true,
@@ -133,7 +133,15 @@
       "./plugins/withSaimoSigning",
       "./plugins/withSaimoArquiteturas",
       "expo-image",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0F2A",
+          "drawable": {
+            "icon": "./assets/abertura/splash-vazio.xml"
+          }
+        }
+      ],
       "expo-status-bar"
     ],
     "experiments": {

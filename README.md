@@ -13,6 +13,12 @@ app confere esse release e oferece a atualização sozinho.
 
 ## O que tem
 
+- **Abertura animada** na partida a frio: o logo montado peça por peça
+  (`assets/abertura/`, 9:16 em pé e 16:9 no tablet deitado), sem som, cobrindo
+  a tela, com fade de 250 ms para o app, que monta por baixo. Toque ou voltar
+  pulam. A tela do sistema (`expo-splash-screen` no `app.json`) é do mesmo
+  azul #0B0F2A e sem ícone. Erro no vídeo ou primeiro quadro que não vem em
+  1,5 s: a abertura sai na hora (`components/Abertura.tsx`).
 - **TV ao vivo** com a mesma lista dos outros apps (`catalogo.txt` do
   SaimoPlayer), várias fontes por canal, ClearKey e troca automática de fonte;
   ao vivo não tem pausa
@@ -81,6 +87,10 @@ para o Git. O que precisa sobreviver a isso fica em plugins:
 - `plugins/withSaimoArquiteturas.js`: código nativo só para ARM
   (`arm64-v8a`, `armeabi-v7a`). Celular é ARM; sem x86 o build leva perto da
   metade do tempo e o APK fica menor. Emulador x86 não roda esse APK.
+
+A tela do sistema sai do `expo-splash-screen` (cor e ícone vazio
+`assets/abertura/splash-vazio.xml`); o prebuild põe o
+`SplashScreenManager.registerOnActivity` no `MainActivity`.
 
 compileSdk e targetSdk 37 vêm do `expo-build-properties` no `app.json`.
 
