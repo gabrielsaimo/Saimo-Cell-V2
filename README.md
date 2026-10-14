@@ -37,8 +37,8 @@ app confere esse release e oferece a atualização sozinho.
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com
   ficha, episódios, atores e escolha de fonte
 - **Fonte mantida na série**: ao passar de episódio (automático, Próximo ou outro da
-  série), prefere a fonte que estava tocando — mesmo servidor, senão a mesma posição,
-  senão a ordem de sempre (`utils/fontePreferida.ts`); se falhar, as outras fontes
+  série), prefere a fonte que estava tocando, sem trocar entre dublado e legendado — mesmo
+  servidor, senão a mesma posição na versão, senão a ordem de sempre (`utils/fontePreferida.ts`); se falhar, as outras fontes
   seguem como reserva
 - **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
   ajuste de sincronia (`services/legendas.ts`); sem chave nem cadastro

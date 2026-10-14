@@ -414,7 +414,7 @@ export default function MediaPlayerScreen() {
         seriesId?: string; season?: string;
         nextId?: string; nextUrl?: string; nextTitle?: string;
         nextSeason?: string; nextEpisode?: string;
-        sources?: string; nextSources?: string;
+        sources?: string; nextSources?: string; sourceLabels?: string; nextSourceLabels?: string;
         offline?: string;
         tmdb?: string; episode?: string;
     }>();
@@ -452,6 +452,17 @@ export default function MediaPlayerScreen() {
         } catch { /* usa a URL principal */ }
         return Array.from(new Set([decodedUrl, ...provided].filter(Boolean)));
     }, [decodedUrl, params.sources]);
+    // Versão (dub/leg) de cada endereço: a preferência nunca troca de versão.
+    const rotulos = useMemo(() => {
+        const ler = (v?: string): Record<string, string> => {
+            try { return v ? JSON.parse(decodeURIComponent(v)) : {}; } catch { return {}; }
+        };
+        return { ...ler(params.sourceLabels), ...ler(params.nextSourceLabels) };
+    }, [params.sourceLabels, params.nextSourceLabels]);
+    const comVersao = useCallback(
+        (urls: string[]) => urls.map((url) => ({ url, versao: rotulos[url] })),
+        [rotulos],
+    );
     const isOffline = params.offline === '1' || decodedUrl.startsWith('file://');
 
     // ── Episode state ──────────────────────────────────────────────────────
@@ -767,7 +778,7 @@ export default function MediaPlayerScreen() {
     useEffect(() => {
         if (!sourceUrls[0]) { setHasError(true); setErrorMsg('URL inválida'); setIsLoading(false); return; }
         // Série: mantém a fonte que a pessoa vinha usando no episódio anterior.
-        const inicial = isOffline ? 0 : fontePreferida(params.seriesId, sourceUrls);
+        const inicial = isOffline ? 0 : fontePreferida(params.seriesId, comVersao(sourceUrls));
         sourceIndexRef.current = inicial;
         setPlaybackSources(sourceUrls);
         setSelectedSource(inicial);
@@ -781,7 +792,7 @@ export default function MediaPlayerScreen() {
         if (isOffline) { setResolvedUrl(sourceUrls[0]); return; }
         // Start with strategy 0 (VLC UA), no pre-fetch needed
         setResolvedUrl(sourceUrls[inicial]);
-    }, [sourceUrls, isOffline, params.seriesId]);
+    }, [sourceUrls, isOffline, params.seriesId, comVersao]);
 
     const tryNextStrategy = useCallback(async () => {
         if (!isMountedRef.current) return;
@@ -940,7 +951,7 @@ export default function MediaPlayerScreen() {
             telemetria.tocou('vod', m.titulo, m.url, sourceIndexRef.current + 1, Date.now() - m.desde);
         }
         // Guarda a fonte que de fato abriu: o próximo episódio da série a prefere.
-        if (!isOffline) lembrarFonte(params.seriesId, activeUrl, sourceIndexRef.current);
+        if (!isOffline) lembrarFonte(params.seriesId, comVersao(playbackSources), sourceIndexRef.current);
         const d = data?.duration;
         if (d && isFinite(d) && d > 0) setDuration(d);
         const natural = data?.naturalSize;
@@ -973,7 +984,7 @@ export default function MediaPlayerScreen() {
                 videoRef.current?.seek(saved.progress);
             }
         }
-    }, [params.id, params.seriesId, activeUrl, isOffline, getProgress]);
+    }, [params.id, params.seriesId, playbackSources, comVersao, isOffline, getProgress]);
 
     const onProgress = useCallback((data: any) => {
         if (!isMountedRef.current) return;
@@ -1197,7 +1208,7 @@ export default function MediaPlayerScreen() {
             nextList = Array.from(new Set([next.url, ...extra].filter(Boolean))) as string[];
         } catch { /* mantém a URL principal do próximo episódio */ }
         // Mesma fonte do episódio atual, se o próximo a tiver (host, depois posição).
-        const preferida = fontePreferida(params.seriesId, nextList);
+        const preferida = fontePreferida(params.seriesId, comVersao(nextList));
         setPlaybackSources(nextList);
         sourceIndexRef.current = preferida;
         setSelectedSource(preferida);
@@ -1206,7 +1217,7 @@ export default function MediaPlayerScreen() {
         // O episódio seguinte segue direto na primeira fonte: abrir a escolha
         // aqui parava a maratona a cada episódio. Trocar continua no botão Fonte.
         setVideoKey((k) => k + 1);
-    }, [resolvedNextEpisode, params.seriesId, params.season, params.nextSources, setSeriesProgress, isOffline, items, router]);
+    }, [resolvedNextEpisode, params.seriesId, params.season, params.nextSources, comVersao, setSeriesProgress, isOffline, items, router]);
     handleNextEpisodeRef.current = handleNextEpisode;
     const toggleAspectRatio = useCallback(() => {
         setResizeMode((prev) => {

@@ -31,6 +31,10 @@ import type { MediaItem, Episode, CastMember } from '../../types';
 const { width, height } = Dimensions.get('window');
 
 // Cor da classificação — a mesma régua da tela de filme.
+/** Versão (dub/leg) de cada fonte, por endereço, para o player manter a escolhida. */
+const rotulosDe = (fontes?: { url: string; label?: string }[]) =>
+  Object.fromEntries((fontes ?? []).map(f => [f.url, f.label ?? 'dub']));
+
 const getCertColor = (cert?: string) => {
   if (!cert) return Colors.textSecondary;
   const c = cert.toUpperCase();
@@ -145,6 +149,7 @@ export default function SeriesDetailScreen() {
         id: ep.id,
         url: encodeURIComponent(ep.url),
         sources: encodeURIComponent(JSON.stringify((ep.sources ?? []).map(source => source.url))),
+        sourceLabels: encodeURIComponent(JSON.stringify(rotulosDe(ep.sources))),
         title: `${series.name} - T${season} E${ep.episode}`,
         seriesId: series.id,
         season,
@@ -154,6 +159,7 @@ export default function SeriesDetailScreen() {
           nextId: nextEp.id,
           nextUrl: encodeURIComponent(nextEp.url),
           nextSources: encodeURIComponent(JSON.stringify((nextEp.sources ?? []).map(source => source.url))),
+          nextSourceLabels: encodeURIComponent(JSON.stringify(rotulosDe(nextEp.sources))),
           nextTitle: `${series.name} - T${nextSeason} E${nextEp.episode}`,
           nextSeason,
           nextEpisode: String(nextEp.episode),
