@@ -36,6 +36,10 @@ app confere esse release e oferece a atualização sozinho.
   e tempo de jogo atualizam a cada minuto com a aba aberta, e tocar abre o canal
 - **Filmes e séries** do acervo compartilhado (`vod/` do SaimoPlayer), com
   ficha, episódios, atores e escolha de fonte
+- **Fonte mantida na série**: ao passar de episódio (automático, Próximo ou outro da
+  série), prefere a fonte que estava tocando — mesmo servidor, senão a mesma posição,
+  senão a ordem de sempre (`utils/fontePreferida.ts`); se falhar, as outras fontes
+  seguem como reserva
 - **Legendas do OpenSubtitles** em filmes e séries (pt-BR, pt-PT, inglês, espanhol), com
   ajuste de sincronia (`services/legendas.ts`); sem chave nem cadastro
 - **Pular abertura e créditos** com os tempos do

@@ -23,6 +23,7 @@ import { useMediaStore } from '../../stores/mediaStore';
 import CastAction from '../../components/CastAction';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { resolveDownloadId } from '../../services/downloadRouting';
+import { fontePreferida, lembrarFonte } from '../../utils/fontePreferida';
 import { openDownload } from '../../services/playDownload';
 import {
     STRATEGIES, resolveUrlViaGet, detectSourceType,
@@ -765,10 +766,12 @@ export default function MediaPlayerScreen() {
 
     useEffect(() => {
         if (!sourceUrls[0]) { setHasError(true); setErrorMsg('URL inválida'); setIsLoading(false); return; }
-        sourceIndexRef.current = 0;
+        // Série: mantém a fonte que a pessoa vinha usando no episódio anterior.
+        const inicial = isOffline ? 0 : fontePreferida(params.seriesId, sourceUrls);
+        sourceIndexRef.current = inicial;
         setPlaybackSources(sourceUrls);
-        setSelectedSource(0);
-        setActiveUrl(sourceUrls[0]);
+        setSelectedSource(inicial);
+        setActiveUrl(sourceUrls[inicial]);
         // Com mais de uma fonte, a escolha aparece por cima — mas a Fonte 1 já
         // vai carregando. Antes o filme ficava parado até alguém escolher, e
         // escolher a própria Fonte 1 ainda recriava o player (mais 4 s).
@@ -777,8 +780,8 @@ export default function MediaPlayerScreen() {
         }
         if (isOffline) { setResolvedUrl(sourceUrls[0]); return; }
         // Start with strategy 0 (VLC UA), no pre-fetch needed
-        setResolvedUrl(sourceUrls[0]);
-    }, [sourceUrls, isOffline]);
+        setResolvedUrl(sourceUrls[inicial]);
+    }, [sourceUrls, isOffline, params.seriesId]);
 
     const tryNextStrategy = useCallback(async () => {
         if (!isMountedRef.current) return;
@@ -936,6 +939,8 @@ export default function MediaPlayerScreen() {
             m.avisado = true;
             telemetria.tocou('vod', m.titulo, m.url, sourceIndexRef.current + 1, Date.now() - m.desde);
         }
+        // Guarda a fonte que de fato abriu: o próximo episódio da série a prefere.
+        if (!isOffline) lembrarFonte(params.seriesId, activeUrl, sourceIndexRef.current);
         const d = data?.duration;
         if (d && isFinite(d) && d > 0) setDuration(d);
         const natural = data?.naturalSize;
@@ -968,7 +973,7 @@ export default function MediaPlayerScreen() {
                 videoRef.current?.seek(saved.progress);
             }
         }
-    }, [params.id, getProgress]);
+    }, [params.id, params.seriesId, activeUrl, isOffline, getProgress]);
 
     const onProgress = useCallback((data: any) => {
         if (!isMountedRef.current) return;
@@ -1191,9 +1196,13 @@ export default function MediaPlayerScreen() {
             const extra = params.nextSources ? JSON.parse(decodeURIComponent(params.nextSources)) : [];
             nextList = Array.from(new Set([next.url, ...extra].filter(Boolean))) as string[];
         } catch { /* mantém a URL principal do próximo episódio */ }
+        // Mesma fonte do episódio atual, se o próximo a tiver (host, depois posição).
+        const preferida = fontePreferida(params.seriesId, nextList);
         setPlaybackSources(nextList);
-        sourceIndexRef.current = 0;
-        setSelectedSource(0);
+        sourceIndexRef.current = preferida;
+        setSelectedSource(preferida);
+        setActiveUrl(nextList[preferida]);
+        setResolvedUrl(nextList[preferida]);
         // O episódio seguinte segue direto na primeira fonte: abrir a escolha
         // aqui parava a maratona a cada episódio. Trocar continua no botão Fonte.
         setVideoKey((k) => k + 1);
