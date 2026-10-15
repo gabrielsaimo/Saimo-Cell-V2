@@ -512,6 +512,10 @@ class SaimoConnectService {
     this.sendCommand({ t: 'fonte', delta });
   }
 
+  requestSync(): void {
+    this.sendCommand({ t: 'sync' });
+  }
+
   sendKey(
     code:
       | 'UP'

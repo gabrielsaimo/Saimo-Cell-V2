@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
 import Video, { DRMType } from 'react-native-video';
 import { useConnectStore, TvSource } from '../stores/connectStore';
@@ -7,6 +7,8 @@ import { configureClearKey } from '../services/clearKeyServer';
 interface AudioTrackProps {
   source: TvSource;
   volume: number;
+  liveOffsetMs?: number;
+  userOffsetMs?: number;
 }
 
 const dadinhoCache = new Map<string, { resolved: string; timestamp: number }>();
@@ -95,7 +97,7 @@ async function resolveAudioStream(source: TvSource): Promise<{
   };
 }
 
-function SingleAudioTrack({ source, volume }: AudioTrackProps) {
+function SingleAudioTrack({ source, volume, liveOffsetMs, userOffsetMs = 0 }: AudioTrackProps) {
   const [streamData, setStreamData] = useState<{
     uri: string;
     headers?: Record<string, string>;
@@ -104,6 +106,25 @@ function SingleAudioTrack({ source, volume }: AudioTrackProps) {
   } | null>(null);
 
   const [keyCounter, setKeyCounter] = useState(0);
+  const videoRef = useRef<any>(null);
+  const hasInitialSynced = useRef(false);
+  const lastSeekTimestamp = useRef(0);
+  const lastAppliedTargetDelaySec = useRef(0);
+  const pendingManualSeek = useRef(false);
+
+  // Se o liveOffsetMs da TV não vier ou for inválido (<= 0), usamos 10.000ms (~10s)
+  // que é a latência padrão do buffer de hardware da TV Box
+  const effectiveTvOffsetMs = liveOffsetMs && liveOffsetMs > 0 ? liveOffsetMs : 10000;
+  // targetDelaySec: tempo em segundos que o celular deve ficar atrás da borda viva
+  const totalDelayMs = Math.max(500, effectiveTvOffsetMs + userOffsetMs);
+  const targetDelaySec = totalDelayMs / 1000;
+
+  // Quando o usuário ajusta o delay manual ou o atraso da TV muda expressivamente, agenda alinhamento
+  useEffect(() => {
+    if (Math.abs(targetDelaySec - lastAppliedTargetDelaySec.current) > 0.1) {
+      pendingManualSeek.current = true;
+    }
+  }, [targetDelaySec]);
 
   useEffect(() => {
     let ativo = true;
@@ -112,6 +133,7 @@ function SingleAudioTrack({ source, volume }: AudioTrackProps) {
       .then((data) => {
         if (ativo) {
           setStreamData(data);
+          hasInitialSynced.current = false;
         }
       })
       .catch((err) => {
@@ -123,10 +145,39 @@ function SingleAudioTrack({ source, volume }: AudioTrackProps) {
     };
   }, [source.url, source.keyId, source.key, source.referer, source.userAgent, keyCounter]);
 
+  const handleProgress = (data: { currentTime: number; seekableDuration: number }) => {
+    if (!data || !data.seekableDuration || data.seekableDuration <= 3) return;
+
+    const now = Date.now();
+    // Atraso atual do celular em relação à borda viva do streaming:
+    const phoneDelaySec = Math.max(0, data.seekableDuration - data.currentTime);
+    const drift = Math.abs(phoneDelaySec - targetDelaySec);
+
+    const shouldInitialSync = !hasInitialSynced.current && data.currentTime > 0.5;
+    const shouldManualSync = pendingManualSeek.current && now - lastSeekTimestamp.current > 500;
+    // Drift considerável (> 2.0s de diferença entre celular e TV) após sincronização inicial:
+    const shouldDriftSync = hasInitialSynced.current && drift > 2.0 && now - lastSeekTimestamp.current > 7000;
+
+    if (shouldInitialSync || shouldManualSync || shouldDriftSync) {
+      const targetSeek = Math.max(0.5, data.seekableDuration - targetDelaySec);
+      if (targetSeek < data.seekableDuration) {
+        console.log(
+          `[ConnectAudio] Sincronizando: phoneDelay=${phoneDelaySec.toFixed(2)}s, targetDelay=${targetDelaySec.toFixed(2)}s, seekTo=${targetSeek.toFixed(2)}s (${shouldInitialSync ? 'inicial' : shouldManualSync ? 'ajuste' : 'drift'})`
+        );
+        videoRef.current?.seek(targetSeek);
+        lastSeekTimestamp.current = now;
+        hasInitialSynced.current = true;
+        pendingManualSeek.current = false;
+        lastAppliedTargetDelaySec.current = targetDelaySec;
+      }
+    }
+  };
+
   if (!streamData) return null;
 
   return (
     <Video
+      ref={videoRef}
       key={`audio-video-${streamData.uri}-${keyCounter}`}
       source={{
         uri: streamData.uri,
@@ -142,6 +193,8 @@ function SingleAudioTrack({ source, volume }: AudioTrackProps) {
       ignoreSilentSwitch="ignore"
       disableFocus={true}
       preventsDisplaySleepDuringVideoPlayback={false}
+      progressUpdateInterval={500}
+      onProgress={handleProgress}
       style={styles.hiddenVideo}
       onError={(err) => {
         console.warn('[ConnectAudio] Erro ao tocar áudio no celular:', err);
@@ -163,6 +216,7 @@ export default function ConnectAudioHost() {
   const phoneAudioMode = useConnectStore((s) => s.phoneAudioMode);
   const tvState = useConnectStore((s) => s.tvState);
   const status = useConnectStore((s) => s.status);
+  const audioSyncDelayMs = useConnectStore((s) => s.audioSyncDelayMs);
 
   if (status !== 'connected' || !tvState || phoneAudioMode === 'none') {
     return null;
@@ -183,6 +237,8 @@ export default function ConnectAudioHost() {
           key={`audio-0-${sc0?.channel || 'c0'}-${sc0?.sourceIndex || 0}-${s0.url}`}
           source={s0}
           volume={1.0}
+          liveOffsetMs={sc0?.liveOffset}
+          userOffsetMs={audioSyncDelayMs}
         />
       )}
       {playScreen1 && s1 && (
@@ -190,6 +246,8 @@ export default function ConnectAudioHost() {
           key={`audio-1-${sc1?.channel || 'c1'}-${sc1?.sourceIndex || 0}-${s1.url}`}
           source={s1}
           volume={1.0}
+          liveOffsetMs={sc1?.liveOffset}
+          userOffsetMs={audioSyncDelayMs}
         />
       )}
     </View>

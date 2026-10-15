@@ -19,6 +19,7 @@ export interface TvScreen {
   program: string | null;
   source: TvSource;
   sourceIndex: number;
+  liveOffset?: number; // em milissegundos
 }
 
 export interface TvState {
@@ -132,7 +133,10 @@ export const useConnectStore = create<ConnectStoreState>((set, get) => ({
     // Se a TV entrar em multiTela e o celular estiver conectado, podemos abrir ou destacar o painel
   },
   setPhoneAudioMode: (phoneAudioMode) => set({ phoneAudioMode }),
-  setAudioSyncDelayMs: (audioSyncDelayMs) => set({ audioSyncDelayMs }),
+  setAudioSyncDelayMs: (audioSyncDelayMs) => {
+    set({ audioSyncDelayMs });
+    AsyncStorage.setItem('@saimo_connect_audio_delay', String(audioSyncDelayMs)).catch(() => {});
+  },
   setSheetVisible: (isSheetVisible) => set({ isSheetVisible }),
   setRemoteVisible: (isRemoteVisible) => set({ isRemoteVisible }),
   setMultiAudioVisible: (isMultiAudioVisible) => set({ isMultiAudioVisible }),
@@ -152,6 +156,14 @@ export async function initConnectStore(): Promise<void> {
     const savedName = await AsyncStorage.getItem(STORAGE_KEY_PHONE_NAME);
     if (savedName) {
       useConnectStore.getState().setPhoneName(savedName);
+    }
+
+    const savedDelay = await AsyncStorage.getItem('@saimo_connect_audio_delay');
+    if (savedDelay !== null) {
+      const parsedDelay = parseInt(savedDelay, 10);
+      if (!isNaN(parsedDelay)) {
+        useConnectStore.getState().setAudioSyncDelayMs(parsedDelay);
+      }
     }
 
     const lastTvJson = await AsyncStorage.getItem(STORAGE_KEY_LAST_TV);

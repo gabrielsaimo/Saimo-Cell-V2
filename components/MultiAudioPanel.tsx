@@ -42,9 +42,22 @@ export default function MultiAudioPanel() {
   };
 
   const handleAdjustDelay = (delta: number) => {
-    const next = Math.max(-1000, Math.min(1000, audioSyncDelayMs + delta));
+    const next = Math.max(-10000, Math.min(30000, audioSyncDelayMs + delta));
     setAudioSyncDelayMs(next);
   };
+
+  const handleSyncWithTv = () => {
+    setAudioSyncDelayMs(0);
+    saimoConnect.requestSync();
+  };
+
+  const activeTrackScreen = phoneAudioMode === '1' ? screen1 : screen0;
+  const tvLiveOffsetMs =
+    activeTrackScreen?.liveOffset && activeTrackScreen.liveOffset > 0
+      ? activeTrackScreen.liveOffset
+      : 10000;
+  const tvOffsetSecStr = (tvLiveOffsetMs / 1000).toFixed(1);
+  const totalOffsetSecStr = (Math.max(500, tvLiveOffsetMs + audioSyncDelayMs) / 1000).toFixed(1);
 
   // Mensagem descritiva do cenário atual
   let cenarioDica = '';
@@ -324,25 +337,61 @@ export default function MultiAudioPanel() {
               </View>
             </View>
 
-            {/* SINCRONIA BLUETOOTH */}
+            {/* SINCRONIA DO ÁUDIO COM A TV & FONE */}
             {phoneAudioMode !== 'none' && (
               <View style={styles.syncCard}>
                 <View style={styles.syncHeader}>
-                  <Ionicons name="bluetooth" size={18} color={Colors.primaryLight} />
-                  <Text style={styles.syncTitle}>Ajuste de Atraso (Bluetooth)</Text>
-                  <Text style={styles.syncValText}>
-                    {audioSyncDelayMs > 0 ? `+${audioSyncDelayMs}` : audioSyncDelayMs} ms
-                  </Text>
+                  <Ionicons name="sync-circle" size={20} color={Colors.primaryLight} />
+                  <Text style={styles.syncTitle}>Sincronia com a TV & Fone</Text>
+                  <View style={styles.syncBadge}>
+                    <Text style={styles.syncBadgeText}>
+                      {audioSyncDelayMs === 0
+                        ? 'Automático'
+                        : `${audioSyncDelayMs > 0 ? '+' : ''}${(audioSyncDelayMs / 1000).toFixed(1)}s`}
+                    </Text>
+                  </View>
                 </View>
+
+                {/* Status da Sincronia */}
+                <View style={styles.syncStatusBox}>
+                  <View style={styles.syncStatusRow}>
+                    <Text style={styles.syncStatusLabel}>Buffer da TV:</Text>
+                    <Text style={styles.syncStatusVal}>~{tvOffsetSecStr}s atrás do vivo</Text>
+                  </View>
+                  <View style={styles.syncStatusRow}>
+                    <Text style={styles.syncStatusLabel}>Celular tocando em:</Text>
+                    <Text style={styles.syncStatusValHighlight}>~{totalOffsetSecStr}s atrás do vivo</Text>
+                  </View>
+                </View>
+
                 <Text style={styles.syncDesc}>
-                  Se o seu fone Bluetooth tiver atraso em relação à TV, ajuste aqui:
+                  O áudio é alinhado com a transmissão da TV. Se a voz no celular ainda estiver à frente da imagem, aumente o atraso (+). Se estiver atrasada, diminua (-).
                 </Text>
+
+                {/* Botão de Sincronia Automática com a TV */}
+                <TouchableOpacity
+                  style={styles.syncAutoBtn}
+                  onPress={handleSyncWithTv}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="refresh" size={16} color="#fff" />
+                  <Text style={styles.syncAutoBtnText}>🎯 Sincronizar com o Buffer da TV</Text>
+                </TouchableOpacity>
+
+                {/* Ajuste Fino */}
+                <Text style={styles.syncSubLabel}>Ajuste Fino:</Text>
                 <View style={styles.syncControls}>
                   <TouchableOpacity
                     style={styles.syncStepBtn}
-                    onPress={() => handleAdjustDelay(-50)}
+                    onPress={() => handleAdjustDelay(-1000)}
                   >
-                    <Text style={styles.syncStepBtnText}>-50ms</Text>
+                    <Text style={styles.syncStepBtnText}>-1s</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.syncStepBtn}
+                    onPress={() => handleAdjustDelay(-200)}
+                  >
+                    <Text style={styles.syncStepBtnText}>-0.2s</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.syncResetBtn}
@@ -352,10 +401,35 @@ export default function MultiAudioPanel() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.syncStepBtn}
-                    onPress={() => handleAdjustDelay(50)}
+                    onPress={() => handleAdjustDelay(200)}
                   >
-                    <Text style={styles.syncStepBtnText}>+50ms</Text>
+                    <Text style={styles.syncStepBtnText}>+0.2s</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.syncStepBtn}
+                    onPress={() => handleAdjustDelay(1000)}
+                  >
+                    <Text style={styles.syncStepBtnText}>+1s</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Presets de salto rápido */}
+                <Text style={styles.syncSubLabel}>Saltos Rápidos de Atraso:</Text>
+                <View style={styles.presetsRow}>
+                  {[5000, 8000, 10000, 12000, 15000].map((presetMs) => {
+                    const isSelected = audioSyncDelayMs === presetMs;
+                    return (
+                      <TouchableOpacity
+                        key={`preset-${presetMs}`}
+                        style={[styles.presetBtn, isSelected && styles.presetBtnActive]}
+                        onPress={() => setAudioSyncDelayMs(presetMs)}
+                      >
+                        <Text style={[styles.presetBtnText, isSelected && styles.presetBtnTextActive]}>
+                          +{presetMs / 1000}s
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
             )}
@@ -592,7 +666,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
-    marginBottom: 2,
+    marginBottom: 4,
   },
   syncTitle: {
     color: Colors.text,
@@ -600,19 +674,78 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  syncValText: {
+  syncBadge: {
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.xs,
+    borderWidth: 1,
+    borderColor: Colors.primaryLight,
+  },
+  syncBadgeText: {
     color: Colors.primaryLight,
-    fontSize: Typography.body.fontSize,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  syncStatusBox: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.sm,
+    marginTop: Spacing.xs,
+    marginBottom: Spacing.sm,
+    gap: 4,
+  },
+  syncStatusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  syncStatusLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  syncStatusVal: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  syncStatusValHighlight: {
+    color: Colors.primaryLight,
+    fontSize: 12,
     fontWeight: '700',
   },
   syncDesc: {
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
+    lineHeight: 18,
     marginBottom: Spacing.sm,
+  },
+  syncAutoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.md,
+    gap: 6,
+    marginBottom: Spacing.sm,
+  },
+  syncAutoBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  syncSubLabel: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 6,
+    marginTop: 4,
   },
   syncControls: {
     flexDirection: 'row',
-    gap: Spacing.sm,
+    gap: 6,
+    marginBottom: 8,
   },
   syncStepBtn: {
     flex: 1,
@@ -640,6 +773,32 @@ const styles = StyleSheet.create({
   syncResetBtnText: {
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
+  },
+  presetsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  presetBtn: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.xs,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  presetBtnActive: {
+    backgroundColor: Colors.secondary,
+    borderColor: Colors.secondaryLight,
+  },
+  presetBtnText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  presetBtnTextActive: {
+    color: '#fff',
+    fontWeight: '700',
   },
   bottomActions: {
     marginTop: Spacing.xs,
