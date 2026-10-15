@@ -37,6 +37,17 @@ export default function ConnectSheet() {
     }
   }, [visible]);
 
+  // Ao conectar com sucesso, abre o Controle Remoto automaticamente
+  useEffect(() => {
+    if (visible && status === 'connected') {
+      const timer = setTimeout(() => {
+        setVisible(false);
+        setRemoteVisible(true);
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [visible, status]);
+
   const handleSearch = async () => {
     setIsSearching(true);
     try {
