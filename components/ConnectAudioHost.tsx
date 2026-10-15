@@ -72,8 +72,10 @@ export default function ConnectAudioHost() {
     return null;
   }
 
-  const s0 = tvState.screens?.find((s) => s.idx === 0)?.source;
-  const s1 = tvState.screens?.find((s) => s.idx === 1)?.source;
+  const sc0 = tvState.screens?.find((s) => s.idx === 0);
+  const sc1 = tvState.screens?.find((s) => s.idx === 1);
+  const s0 = sc0?.source;
+  const s1 = sc1?.source;
 
   const playScreen0 = (phoneAudioMode === '0' || phoneAudioMode === 'both') && s0?.url;
   const playScreen1 = (phoneAudioMode === '1' || phoneAudioMode === 'both') && s1?.url;
@@ -81,10 +83,10 @@ export default function ConnectAudioHost() {
   return (
     <View pointerEvents="none" style={styles.container}>
       {playScreen0 && s0 && (
-        <SingleAudioTrack key={`audio-0-${s0.url}`} source={s0} volume={1.0} />
+        <SingleAudioTrack key={`audio-0-${sc0?.channel || 'c0'}-${sc0?.sourceIndex || 0}-${s0.url}`} source={s0} volume={1.0} />
       )}
       {playScreen1 && s1 && (
-        <SingleAudioTrack key={`audio-1-${s1.url}`} source={s1} volume={1.0} />
+        <SingleAudioTrack key={`audio-1-${sc1?.channel || 'c1'}-${sc1?.sourceIndex || 0}-${s1.url}`} source={s1} volume={1.0} />
       )}
     </View>
   );

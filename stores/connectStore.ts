@@ -23,6 +23,8 @@ export interface TvScreen {
 
 export interface TvState {
   mode: 'idle' | 'live' | 'vod' | 'radio';
+  screen?: 'home' | 'live' | 'vod' | 'radio' | 'search' | 'settings' | 'guide' | 'idle';
+  searchText?: string;
   playing: boolean;
   multi: boolean;
   active: number; // 0 ou 1

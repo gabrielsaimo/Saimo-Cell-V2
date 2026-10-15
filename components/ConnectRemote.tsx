@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -23,16 +23,65 @@ export default function ConnectRemote() {
   const setMultiAudioVisible = useConnectStore((s) => s.setMultiAudioVisible);
   const textRequest = useConnectStore((s) => s.textRequest);
 
+  const isLive = tvState?.mode === 'live';
+  const isSearch = tvState?.screen === 'search';
+
   const [customText, setCustomText] = useState('');
   const [showTextInput, setShowTextInput] = useState(false);
+  const [showNumpad, setShowNumpad] = useState(false);
+  const [typedDigits, setTypedDigits] = useState('');
+  const [searchText, setSearchText] = useState('');
+
+  useEffect(() => {
+    if (tvState?.screen === 'search' && tvState.searchText !== undefined) {
+      setSearchText(tvState.searchText);
+    }
+  }, [tvState?.screen, tvState?.searchText]);
 
   if (!visible) return null;
 
   const currentScreen = tvState?.screens?.find((s) => s.idx === (tvState?.active ?? 0));
   const isMulti = tvState?.multi;
 
-  const handleKey = (code: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'OK' | 'BACK' | 'HOME' | 'MENU' | 'CH_UP' | 'CH_DOWN') => {
+  const handleKey = (
+    code:
+      | 'UP'
+      | 'DOWN'
+      | 'LEFT'
+      | 'RIGHT'
+      | 'OK'
+      | 'BACK'
+      | 'HOME'
+      | 'MENU'
+      | 'CH_UP'
+      | 'CH_DOWN'
+      | '0'
+      | '1'
+      | '2'
+      | '3'
+      | '4'
+      | '5'
+      | '6'
+      | '7'
+      | '8'
+      | '9'
+  ) => {
     saimoConnect.sendKey(code);
+  };
+
+  const handleNumber = (n: string) => {
+    setTypedDigits((prev) => (prev + n).slice(-4));
+    saimoConnect.sendKey(n as any);
+  };
+
+  const handleClearDigits = () => {
+    setTypedDigits('');
+    handleKey('BACK');
+  };
+
+  const handleSearchChange = (text: string) => {
+    setSearchText(text);
+    saimoConnect.sendText(text);
   };
 
   const handleSendCustomText = () => {
@@ -178,7 +227,7 @@ export default function ConnectRemote() {
               </View>
             )}
 
-            {/* BARRA SUPERIOR DO CONTROLE: VOLTAR, HOME, TECLADO */}
+            {/* BARRA SUPERIOR DO CONTROLE: VOLTAR, HOME, MENU, NÚMEROS/BUSCAR/TECLADO */}
             <View style={styles.topControlRow}>
               <TouchableOpacity
                 style={styles.secondaryControlBtn}
@@ -204,17 +253,112 @@ export default function ConnectRemote() {
                 <Text style={styles.secondaryControlText}>Menu</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[styles.secondaryControlBtn, (showTextInput || textRequest) && styles.secondaryControlBtnActive]}
-                onPress={() => setShowTextInput(!showTextInput)}
-              >
-                <Ionicons name="keypad-outline" size={22} color={(showTextInput || textRequest) ? Colors.primaryLight : Colors.text} />
-                <Text style={styles.secondaryControlText}>Teclado</Text>
-              </TouchableOpacity>
+              {isSearch ? (
+                <TouchableOpacity
+                  style={[styles.secondaryControlBtn, styles.secondaryControlBtnActive]}
+                  onPress={() => {}}
+                >
+                  <Ionicons name="search" size={22} color={Colors.primaryLight} />
+                  <Text style={[styles.secondaryControlText, { color: Colors.primaryLight }]}>Buscar</Text>
+                </TouchableOpacity>
+              ) : isLive ? (
+                <TouchableOpacity
+                  style={[styles.secondaryControlBtn, showNumpad && styles.secondaryControlBtnActive]}
+                  onPress={() => setShowNumpad(!showNumpad)}
+                >
+                  <MaterialIcons name="dialpad" size={22} color={showNumpad ? Colors.primaryLight : Colors.text} />
+                  <Text style={[styles.secondaryControlText, showNumpad && { color: Colors.primaryLight }]}>Números</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.secondaryControlBtn, (showTextInput || textRequest) && styles.secondaryControlBtnActive]}
+                  onPress={() => setShowTextInput(!showTextInput)}
+                >
+                  <Ionicons name="keypad-outline" size={22} color={(showTextInput || textRequest) ? Colors.primaryLight : Colors.text} />
+                  <Text style={styles.secondaryControlText}>Teclado</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
-            {/* DIGITAÇÃO REMOTA / ENTRADA DE TEXTO NA TV */}
-            {(showTextInput || textRequest) && (
+            {/* PESQUISA EM TEMPO REAL NA TV */}
+            {isSearch && (
+              <View style={styles.searchCard}>
+                <View style={styles.searchHeaderRow}>
+                  <Ionicons name="search" size={18} color={Colors.primaryLight} />
+                  <Text style={styles.searchHeaderTitle}>Pesquisa em Tempo Real na TV</Text>
+                </View>
+                <View style={styles.searchBarRow}>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder="Digite o que procura na TV..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={searchText}
+                    onChangeText={handleSearchChange}
+                    autoFocus
+                    returnKeyType="search"
+                  />
+                  {searchText.length > 0 && (
+                    <TouchableOpacity
+                      style={styles.clearBtn}
+                      onPress={() => handleSearchChange('')}
+                    >
+                      <Ionicons name="close-circle" size={22} color={Colors.textSecondary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={styles.searchHint}>
+                  Os resultados aparecem na TV automaticamente conforme você digita.
+                </Text>
+              </View>
+            )}
+
+            {/* TECLADO NUMÉRICO 0-9 (COMO CONTROLE REAL NA TV AO VIVO) */}
+            {isLive && showNumpad && (
+              <View style={styles.numpadContainer}>
+                {typedDigits.length > 0 && (
+                  <View style={styles.typedDigitsRow}>
+                    <Text style={styles.typedDigitsLabel}>Canal:</Text>
+                    <Text style={styles.typedDigitsValue}>{typedDigits}</Text>
+                  </View>
+                )}
+                <View style={styles.numpadGrid}>
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => (
+                    <TouchableOpacity
+                      key={n}
+                      style={styles.numpadBtn}
+                      onPress={() => handleNumber(n)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.numpadText}>{n}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={[styles.numpadBtn, styles.numpadActionBtn]}
+                    onPress={() => handleKey('MENU')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.numpadActionText}>MENU</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.numpadBtn}
+                    onPress={() => handleNumber('0')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.numpadText}>0</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.numpadBtn, styles.numpadActionBtn]}
+                    onPress={handleClearDigits}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="backspace-outline" size={24} color={Colors.text} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* DIGITAÇÃO REMOTA / ENTRADA DE TEXTO NA TV (FORA DA BUSCA / TV AO VIVO) */}
+            {!isSearch && !isLive && (showTextInput || textRequest) && (
               <View style={styles.keyboardCard}>
                 <Text style={styles.keyboardLabel}>
                   {textRequest ? `A TV está pedindo: "${textRequest.hint}"` : 'Enviar texto para a TV:'}
@@ -668,5 +812,114 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // BUSCA EM TEMPO REAL
+  searchCard: {
+    backgroundColor: Colors.surfaceVariant,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+  },
+  searchHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: Spacing.xs,
+  },
+  searchHeaderTitle: {
+    color: Colors.primaryLight,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  searchBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    color: Colors.text,
+    paddingVertical: Spacing.sm,
+    fontSize: 15,
+  },
+  clearBtn: {
+    padding: Spacing.xs,
+  },
+  searchHint: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 6,
+  },
+  // TECLADO NUMÉRICO 0-9
+  numpadContainer: {
+    backgroundColor: Colors.surfaceVariant,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  typedDigitsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    marginBottom: Spacing.sm,
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 4,
+    borderRadius: BorderRadius.full,
+  },
+  typedDigitsLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  typedDigitsValue: {
+    color: Colors.primaryLight,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
+  numpadGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: 240,
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  numpadBtn: {
+    width: 70,
+    height: 52,
+    backgroundColor: Colors.surface,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  numpadText: {
+    color: Colors.text,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  numpadActionBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  numpadActionText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
   },
 });

@@ -292,7 +292,29 @@ class SaimoConnectService {
     this.sendCommand({ t: 'fonte', delta });
   }
 
-  sendKey(code: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | 'OK' | 'BACK' | 'HOME' | 'MENU' | 'CH_UP' | 'CH_DOWN'): void {
+  sendKey(
+    code:
+      | 'UP'
+      | 'DOWN'
+      | 'LEFT'
+      | 'RIGHT'
+      | 'OK'
+      | 'BACK'
+      | 'HOME'
+      | 'MENU'
+      | 'CH_UP'
+      | 'CH_DOWN'
+      | '0'
+      | '1'
+      | '2'
+      | '3'
+      | '4'
+      | '5'
+      | '6'
+      | '7'
+      | '8'
+      | '9'
+  ): void {
     this.sendCommand({ t: 'key', code });
   }
 
