@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { View, StyleSheet } from 'react-native';
 import Video, { DRMType } from 'react-native-video';
 import { useConnectStore, TvSource } from '../stores/connectStore';
@@ -98,169 +98,184 @@ async function resolveAudioStream(source: TvSource): Promise<{
   };
 }
 
-function SingleAudioTrack({
-  source,
-  volume,
-  liveOffsetMs,
-  userOffsetMs = 0,
-  initialPositionMs,
-}: AudioTrackProps) {
-  const [streamData, setStreamData] = useState<{
-    uri: string;
-    headers?: Record<string, string>;
-    type?: 'm3u8' | 'mpd';
-    drm?: { type: DRMType; licenseServer: string };
-  } | null>(null);
+const AUDIO_BUFFER_CONFIG = {
+  minBufferMs: 30000,
+  maxBufferMs: 60000,
+  bufferForPlaybackMs: 2500,
+  bufferForPlaybackAfterRebufferMs: 5000,
+  live: {
+    targetOffsetMs: 12000,
+    minOffsetMs: 2000,
+    maxOffsetMs: 25000,
+    minPlaybackSpeed: 0.95,
+    maxPlaybackSpeed: 1.05,
+  },
+};
 
-  const [keyCounter, setKeyCounter] = useState(0);
-  const videoRef = useRef<any>(null);
+const SingleAudioTrack = React.memo(
+  function SingleAudioTrack({
+    source,
+    volume,
+    userOffsetMs = 0,
+    initialPositionMs,
+  }: AudioTrackProps) {
+    const [streamData, setStreamData] = useState<{
+      uri: string;
+      headers?: Record<string, string>;
+      type?: 'm3u8' | 'mpd';
+      drm?: { type: DRMType; licenseServer: string };
+    } | null>(null);
 
-  const [isTemporarilyPaused, setIsTemporarilyPaused] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1.0);
+    const [keyCounter, setKeyCounter] = useState(0);
+    const videoRef = useRef<any>(null);
 
-  const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const rateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevUserOffsetRef = useRef<number>(userOffsetMs);
+    const [isTemporarilyPaused, setIsTemporarilyPaused] = useState(false);
+    const [playbackRate, setPlaybackRate] = useState(1.0);
 
-  // Se o liveOffsetMs da TV não vier ou for inválido (<= 0), usamos 12.000ms (~12s)
-  // que é o atraso médio padrão do buffer do ExoPlayer na TV Box
-  const effectiveTvOffsetMs = liveOffsetMs && liveOffsetMs > 0 ? liveOffsetMs : 12000;
-  const totalTargetDelayMs = Math.max(1000, effectiveTvOffsetMs + userOffsetMs);
+    const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const rateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const prevUserOffsetRef = useRef<number>(userOffsetMs);
 
-  useEffect(() => {
-    let ativo = true;
+    // Captura a posição inicial no momento da montagem/mudança de canal para não reiniciar a cada tick
+    const startPosRef = useRef<number | undefined>(
+      initialPositionMs && initialPositionMs > 0 ? Math.round(initialPositionMs) : undefined
+    );
 
-    resolveAudioStream(source)
-      .then((data) => {
-        if (ativo) {
-          setStreamData(data);
-        }
-      })
-      .catch((err) => {
-        console.warn('[ConnectAudio] Falha ao resolver áudio:', err);
-      });
+    useEffect(() => {
+      let ativo = true;
 
-    return () => {
-      ativo = false;
-    };
-  }, [source.url, source.keyId, source.key, source.referer, source.userAgent, keyCounter]);
+      resolveAudioStream(source)
+        .then((data) => {
+          if (ativo) {
+            setStreamData(data);
+          }
+        })
+        .catch((err) => {
+          console.warn('[ConnectAudio] Falha ao resolver áudio:', err);
+        });
 
-  // Aplicação instantânea, perceptível e garantida de ajustes de delay
-  useEffect(() => {
-    const delta = userOffsetMs - prevUserOffsetRef.current;
-    prevUserOffsetRef.current = userOffsetMs;
+      return () => {
+        ativo = false;
+      };
+    }, [source.url, source.keyId, source.key, source.referer, source.userAgent, keyCounter]);
 
-    if (delta === 0) return;
+    // Aplicação instantânea, perceptível e garantida de ajustes de delay
+    useEffect(() => {
+      const delta = userOffsetMs - prevUserOffsetRef.current;
+      prevUserOffsetRef.current = userOffsetMs;
 
-    if (delta > 0) {
-      // O usuário quer MAIS atraso (+0.2s, +1s, +5s, etc.):
-      // Pausa imediatamente o áudio no celular por exatamente `delta` ms.
-      // A imagem da TV na sala continua avançando; quando o som do celular voltar,
-      // ele estará atrasado com precisão física exata de `delta` ms.
-      if (rateTimeoutRef.current) {
-        clearTimeout(rateTimeoutRef.current);
-        rateTimeoutRef.current = null;
-        setPlaybackRate(1.0);
-      }
+      if (delta === 0) return;
 
-      setIsTemporarilyPaused(true);
-
-      if (pauseTimeoutRef.current) {
-        clearTimeout(pauseTimeoutRef.current);
-      }
-
-      pauseTimeoutRef.current = setTimeout(() => {
-        setIsTemporarilyPaused(false);
-        pauseTimeoutRef.current = null;
-      }, delta);
-    } else if (delta < 0) {
-      // O usuário quer MENOS atraso (adiantar o áudio para alcançar a TV)
-      if (pauseTimeoutRef.current) {
-        clearTimeout(pauseTimeoutRef.current);
-        pauseTimeoutRef.current = null;
-        setIsTemporarilyPaused(false);
-      }
-
-      if (delta >= -2000) {
-        // Ajuste fino (-0.2s ou -1s): acelera temporariamente a reprodução
-        const speed = Math.abs(delta) > 500 ? 1.5 : 1.25;
-        const speedFactor = speed - 1.0;
-        const durationMs = Math.round(Math.abs(delta) / speedFactor);
-
-        setPlaybackRate(speed);
-        if (rateTimeoutRef.current) clearTimeout(rateTimeoutRef.current);
-        rateTimeoutRef.current = setTimeout(() => {
-          setPlaybackRate(1.0);
-          rateTimeoutRef.current = null;
-        }, durationMs);
-      } else {
-        // Salto negativo grande ou botão "Zerar": recarrega o stream alinhado ao vivo
+      if (delta > 0) {
+        // O usuário quer MAIS atraso (+0.2s, +1s, +5s, etc.):
+        // Pausa imediatamente o áudio no celular por exatamente delta ms.
         if (rateTimeoutRef.current) {
           clearTimeout(rateTimeoutRef.current);
           rateTimeoutRef.current = null;
+          setPlaybackRate(1.0);
         }
-        setPlaybackRate(1.0);
-        setKeyCounter((k) => k + 1);
+
+        setIsTemporarilyPaused(true);
+
+        if (pauseTimeoutRef.current) {
+          clearTimeout(pauseTimeoutRef.current);
+        }
+
+        pauseTimeoutRef.current = setTimeout(() => {
+          setIsTemporarilyPaused(false);
+          pauseTimeoutRef.current = null;
+        }, delta);
+      } else if (delta < 0) {
+        // O usuário quer MENOS atraso (adiantar o áudio para alcançar a TV)
+        if (pauseTimeoutRef.current) {
+          clearTimeout(pauseTimeoutRef.current);
+          pauseTimeoutRef.current = null;
+          setIsTemporarilyPaused(false);
+        }
+
+        if (delta >= -2000) {
+          // Ajuste fino (-0.2s ou -1s): acelera temporariamente a reprodução
+          const speed = Math.abs(delta) > 500 ? 1.5 : 1.25;
+          const speedFactor = speed - 1.0;
+          const durationMs = Math.round(Math.abs(delta) / speedFactor);
+
+          setPlaybackRate(speed);
+          if (rateTimeoutRef.current) clearTimeout(rateTimeoutRef.current);
+          rateTimeoutRef.current = setTimeout(() => {
+            setPlaybackRate(1.0);
+            rateTimeoutRef.current = null;
+          }, durationMs);
+        } else {
+          // Salto negativo grande ou botão "Zerar": recarrega o stream alinhado ao vivo
+          if (rateTimeoutRef.current) {
+            clearTimeout(rateTimeoutRef.current);
+            rateTimeoutRef.current = null;
+          }
+          setPlaybackRate(1.0);
+          setKeyCounter((k) => k + 1);
+        }
       }
-    }
-  }, [userOffsetMs]);
+    }, [userOffsetMs]);
 
-  useEffect(() => {
-    return () => {
-      if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
-      if (rateTimeoutRef.current) clearTimeout(rateTimeoutRef.current);
-    };
-  }, []);
+    useEffect(() => {
+      return () => {
+        if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
+        if (rateTimeoutRef.current) clearTimeout(rateTimeoutRef.current);
+      };
+    }, []);
 
-  if (!streamData) return null;
-
-  const bufferConfig = {
-    minBufferMs: Math.max(30000, totalTargetDelayMs + 20000),
-    maxBufferMs: Math.max(60000, totalTargetDelayMs + 40000),
-    bufferForPlaybackMs: 2500,
-    bufferForPlaybackAfterRebufferMs: 5000,
-    live: {
-      targetOffsetMs: totalTargetDelayMs,
-      minOffsetMs: Math.max(1000, totalTargetDelayMs - 3000),
-      maxOffsetMs: totalTargetDelayMs + 5000,
-      minPlaybackSpeed: 0.95,
-      maxPlaybackSpeed: 1.05,
-    },
-  };
-
-  return (
-    <Video
-      ref={videoRef}
-      key={`audio-video-${streamData.uri}-${keyCounter}`}
-      source={{
+    // Objeto estável e memoizado para o react-native-video nunca recriar o player sem necessidade
+    const sourceProp = useMemo(() => {
+      if (!streamData) return null;
+      return {
         uri: streamData.uri,
         type: streamData.type,
         headers: streamData.headers,
-        startPosition: initialPositionMs && initialPositionMs > 0 ? Math.round(initialPositionMs) : undefined,
-        bufferConfig,
-      }}
-      bufferConfig={bufferConfig}
-      drm={streamData.drm}
-      paused={isTemporarilyPaused}
-      rate={playbackRate}
-      volume={volume}
-      muted={volume <= 0}
-      playInBackground={true}
-      playWhenInactive={true}
-      ignoreSilentSwitch="ignore"
-      disableFocus={true}
-      preventsDisplaySleepDuringVideoPlayback={false}
-      style={styles.hiddenVideo}
-      onError={(err) => {
-        console.warn('[ConnectAudio] Erro ao tocar áudio no celular:', err);
-        // Tenta reconectar após 2.5s se a playlist expirar
-        setTimeout(() => {
-          setKeyCounter((k) => k + 1);
-        }, 2500);
-      }}
-    />
-  );
-}
+        startPosition: startPosRef.current,
+        bufferConfig: AUDIO_BUFFER_CONFIG,
+      };
+    }, [streamData?.uri, streamData?.type, streamData?.headers]);
+
+    if (!streamData || !sourceProp) return null;
+
+    return (
+      <Video
+        ref={videoRef}
+        key={`audio-video-${streamData.uri}-${keyCounter}`}
+        source={sourceProp}
+        bufferConfig={AUDIO_BUFFER_CONFIG}
+        drm={streamData.drm}
+        paused={isTemporarilyPaused}
+        rate={playbackRate}
+        volume={volume}
+        muted={volume <= 0}
+        playInBackground={true}
+        playWhenInactive={true}
+        ignoreSilentSwitch="ignore"
+        disableFocus={true}
+        preventsDisplaySleepDuringVideoPlayback={false}
+        style={styles.hiddenVideo}
+        onError={(err) => {
+          console.warn('[ConnectAudio] Erro ao tocar áudio no celular:', err);
+          setTimeout(() => {
+            setKeyCounter((k) => k + 1);
+          }, 2500);
+        }}
+      />
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.source.url === next.source.url &&
+      prev.source.keyId === next.source.keyId &&
+      prev.source.key === next.source.key &&
+      prev.source.referer === next.source.referer &&
+      prev.source.userAgent === next.source.userAgent &&
+      prev.volume === next.volume &&
+      prev.userOffsetMs === next.userOffsetMs
+    );
+  }
+);
 
 /**
  * Host de áudio transparente montado no topo da árvore do app (_layout.tsx).
@@ -285,27 +300,25 @@ export default function ConnectAudioHost() {
   const s0 = sc0?.source;
   const s1 = sc1?.source;
 
-  const playScreen0 = (phoneAudioMode === '0' || phoneAudioMode === 'both') && s0?.url;
-  const playScreen1 = (phoneAudioMode === '1' || phoneAudioMode === 'both') && s1?.url;
+  const playScreen0 = (phoneAudioMode === '0' || phoneAudioMode === 'both') && Boolean(s0?.url);
+  const playScreen1 = (phoneAudioMode === '1' || phoneAudioMode === 'both') && Boolean(s1?.url);
 
   return (
     <View pointerEvents="none" style={styles.container}>
       {playScreen0 && s0 && (
         <SingleAudioTrack
-          key={`audio-0-${sc0?.channel || 'c0'}-${sc0?.sourceIndex || 0}-${s0.url}`}
+          key={`audio-track-0-${s0.url}`}
           source={s0}
           volume={1.0}
-          liveOffsetMs={sc0?.liveOffset}
           userOffsetMs={audioSyncDelayMs}
           initialPositionMs={isVod ? vodPos : undefined}
         />
       )}
       {playScreen1 && s1 && (
         <SingleAudioTrack
-          key={`audio-1-${sc1?.channel || 'c1'}-${sc1?.sourceIndex || 0}-${s1.url}`}
+          key={`audio-track-1-${s1.url}`}
           source={s1}
           volume={1.0}
-          liveOffsetMs={sc1?.liveOffset}
           userOffsetMs={audioSyncDelayMs}
         />
       )}
