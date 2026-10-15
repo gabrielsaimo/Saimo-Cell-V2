@@ -1,13 +1,70 @@
 import * as Network from 'expo-network';
-import { useConnectStore, DiscoveredTv, TvState, PhoneAudioMode } from '../stores/connectStore';
+import { AppState, Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import { useConnectStore, initConnectStore, DiscoveredTv, TvState, PhoneAudioMode } from '../stores/connectStore';
+
+const CONNECT_CHANNEL_ID = 'saimo-connect-channel';
+const CONNECT_NOTIF_ID = 'saimo-connect-ongoing';
+
+async function setupConnectNotificationChannel(): Promise<void> {
+  if (Platform.OS === 'android') {
+    try {
+      await Notifications.setNotificationChannelAsync(CONNECT_CHANNEL_ID, {
+        name: 'Saimo Connect',
+        description: 'Mantém o controle remoto e conexão com a TV Box em segundo plano',
+        importance: Notifications.AndroidImportance.LOW,
+        sound: null,
+        enableVibrate: false,
+        showBadge: false,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
+    } catch (_e) {}
+  }
+}
+
+async function showConnectNotification(tvName: string): Promise<void> {
+  if (Platform.OS === 'android') {
+    try {
+      await setupConnectNotificationChannel();
+      await Notifications.scheduleNotificationAsync({
+        identifier: CONNECT_NOTIF_ID,
+        content: {
+          title: `📺 Conectado a ${tvName}`,
+          body: 'Saimo Connect ativo · Toque para abrir o controle remoto',
+          data: { type: 'connect' },
+          sticky: true,
+          autoDismiss: false,
+          color: '#6366F1',
+          priority: Notifications.AndroidNotificationPriority.LOW,
+        } as any,
+        trigger: null,
+      });
+    } catch (_e) {}
+  }
+}
+
+async function hideConnectNotification(): Promise<void> {
+  if (Platform.OS === 'android') {
+    try {
+      await Notifications.dismissNotificationAsync(CONNECT_NOTIF_ID);
+    } catch (_e) {}
+  }
+}
 
 class SaimoConnectService {
   private ws: WebSocket | null = null;
   private pingInterval: any = null;
   private reconnectTimer: any = null;
+  private autoScanInterval: any = null;
+  private watchdogTimer: any = null;
   private currentIp: string | null = null;
   private currentPin: string | null = null;
+  private lastKnownIp: string | null = null;
   private isScanning = false;
+  private userExplicitlyDisconnected = false;
+  private autoConnect = true;
+  private lastActivity = Date.now();
+  private initialized = false;
 
   constructor() {
     // Escuta mudanças de phoneAudioMode na store para sincronizar com a TV
@@ -19,10 +76,82 @@ class SaimoConnectService {
         });
       }
     });
+
+    // Monitora o ciclo de vida do aplicativo (bloqueio de tela / segundo plano)
+    AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        // Celular desbloqueado ou app retornou para primeiro plano:
+        // Se a conexão caiu em segundo plano, reconecta imediatamente!
+        if (!this.isConnected() && !this.userExplicitlyDisconnected) {
+          this.reconnect();
+        }
+      } else if (nextState === 'background') {
+        // Tela apagada ou app em segundo plano:
+        // Envia ping preventivo para manter o socket TCP acordado
+        if (this.isConnected()) {
+          this.sendPing();
+        }
+      }
+    });
+  }
+
+  /** Inicialização completa ao abrir o aplicativo: carrega dados e auto-conecta */
+  async init(): Promise<void> {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    try {
+      await initConnectStore();
+      const store = useConnectStore.getState();
+      const lastTv = store.discoveredTvs[0];
+      if (lastTv?.ip) {
+        this.lastKnownIp = lastTv.ip;
+      }
+
+      // Inicia auto-conexão imediata e silenciosa
+      this.startAutoConnect(lastTv?.ip);
+
+      // Verificação periódica em segundo plano (a cada 12 segundos)
+      if (this.autoScanInterval) clearInterval(this.autoScanInterval);
+      this.autoScanInterval = setInterval(() => {
+        if (!this.isConnected() && !this.userExplicitlyDisconnected && this.autoConnect) {
+          const target = this.currentIp || this.lastKnownIp;
+          if (target) {
+            this.probeIp(target, 600).then((tv) => {
+              if (tv && !this.isConnected() && !this.userExplicitlyDisconnected) {
+                this.connect(tv.ip);
+              }
+            });
+          } else {
+            this.discoverTvs();
+          }
+        }
+      }, 12000);
+    } catch (_e) {}
   }
 
   isConnected(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN && useConnectStore.getState().status === 'connected';
+  }
+
+  /** Inicia processo de conexão automática sem intervenção do usuário */
+  async startAutoConnect(preferredIp?: string): Promise<void> {
+    this.userExplicitlyDisconnected = false;
+    this.autoConnect = true;
+
+    if (this.isConnected()) return;
+
+    if (preferredIp) {
+      this.lastKnownIp = preferredIp;
+      const tv = await this.probeIp(preferredIp, 600);
+      if (tv && !this.isConnected() && !this.userExplicitlyDisconnected) {
+        this.connect(tv.ip);
+        return;
+      }
+    }
+
+    // Se o IP preferido não respondeu ou não existe, dispara busca na sub-rede
+    await this.discoverTvs();
   }
 
   /** Varredura da rede local para encontrar aparelhos com Saimo TV */
@@ -34,16 +163,25 @@ class SaimoConnectService {
     const foundTvs: DiscoveredTv[] = [];
 
     try {
-      // 1. Tenta primeiro as TVs já conhecidas (último IP)
+      // 1. Tenta primeiro as TVs já conhecidas no cache
       const known = useConnectStore.getState().discoveredTvs;
       for (const tv of known) {
         const ok = await this.probeIp(tv.ip, 600);
         if (ok) {
           foundTvs.push(ok);
+          // Se autoConnect estiver ligado e não estiver conectado, conecta na hora!
+          if (this.autoConnect && !this.isConnected() && !this.userExplicitlyDisconnected) {
+            this.connect(ok.ip);
+            return foundTvs;
+          }
         }
       }
 
-      // 2. Descobre IP local deste celular
+      if (this.isConnected()) {
+        return foundTvs;
+      }
+
+      // 2. Descobre IP local deste celular para varrer a sub-rede
       const localIp = await Network.getIpAddressAsync().catch(() => null);
       if (localIp && localIp.includes('.')) {
         const parts = localIp.split('.');
@@ -59,16 +197,23 @@ class SaimoConnectService {
             }
           }
 
-          // Executa em lotes paralelos de 32
+          // Executa em lotes paralelos de 32 para varredura veloz
           const BATCH_SIZE = 32;
           for (let i = 0; i < ips.length; i += BATCH_SIZE) {
+            if (this.isConnected()) break;
+
             const batch = ips.slice(i, i + BATCH_SIZE);
-            const promises = batch.map((ip) => this.probeIp(ip, 750));
+            const promises = batch.map((ip) => this.probeIp(ip, 650));
             const results = await Promise.all(promises);
             for (const r of results) {
               if (r && !foundTvs.some((t) => t.id === r.id)) {
                 foundTvs.push(r);
                 useConnectStore.getState().addDiscoveredTv(r);
+                // Conecta automaticamente na primeira TV que responder!
+                if (this.autoConnect && !this.isConnected() && !this.userExplicitlyDisconnected) {
+                  this.connect(r.ip);
+                  break;
+                }
               }
             }
           }
@@ -77,7 +222,7 @@ class SaimoConnectService {
     } catch (_e) {
     } finally {
       this.isScanning = false;
-      if (!this.isConnected()) {
+      if (!this.isConnected() && useConnectStore.getState().status === 'discovering') {
         useConnectStore.getState().setStatus('disconnected');
       }
     }
@@ -121,9 +266,16 @@ class SaimoConnectService {
 
   /** Conecta a uma TV pelo IP (e opcionalmente código PIN) */
   connect(ip: string, pin?: string): void {
-    this.disconnect();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.currentIp === ip) {
+      return;
+    }
+
+    this.disconnectInternal();
     this.currentIp = ip;
+    this.lastKnownIp = ip;
     this.currentPin = pin || null;
+    this.userExplicitlyDisconnected = false;
+    this.autoConnect = true;
 
     useConnectStore.getState().setStatus('connecting');
 
@@ -133,6 +285,7 @@ class SaimoConnectService {
       this.ws = ws;
 
       ws.onopen = () => {
+        if (this.ws !== ws) return;
         const store = useConnectStore.getState();
         // Handshake inicial obrigatório
         const helloMsg = {
@@ -142,10 +295,13 @@ class SaimoConnectService {
           pin: this.currentPin || undefined,
         };
         ws.send(JSON.stringify(helloMsg));
+        this.lastActivity = Date.now();
         this.startHeartbeat();
       };
 
       ws.onmessage = (event) => {
+        if (this.ws !== ws) return;
+        this.lastActivity = Date.now();
         try {
           const msg = JSON.parse(event.data);
           this.handleMessage(msg, ip);
@@ -153,11 +309,15 @@ class SaimoConnectService {
       };
 
       ws.onerror = (_err) => {
-        this.handleDisconnect();
+        if (this.ws === ws) {
+          this.handleDisconnect();
+        }
       };
 
       ws.onclose = () => {
-        this.handleDisconnect();
+        if (this.ws === ws) {
+          this.handleDisconnect();
+        }
       };
     } catch (_e) {
       this.handleDisconnect();
@@ -179,7 +339,11 @@ class SaimoConnectService {
           port: 8999,
           lastSeen: Date.now(),
         });
-        // Informa se este celular já está com áudio selecionado
+
+        // Mostra notificação contínua no Android para manter segundo plano vivo
+        showConnectNotification(tvName);
+
+        // Se houver áudio selecionado, sincroniza
         if (store.phoneAudioMode !== 'none') {
           this.sendCommand({ t: 'phoneAudio', src: store.phoneAudioMode });
         }
@@ -191,7 +355,7 @@ class SaimoConnectService {
       }
       case 'denied': {
         store.setStatus('disconnected');
-        this.disconnect();
+        this.disconnect(true);
         break;
       }
       case 'state': {
@@ -210,17 +374,32 @@ class SaimoConnectService {
         break;
       }
       case 'pong':
+        this.lastActivity = Date.now();
         break;
+    }
+  }
+
+  private sendPing(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ t: 'ping' }));
+      } catch (_e) {}
     }
   }
 
   private startHeartbeat(): void {
     this.stopHeartbeat();
+    // Heartbeat regular a cada 5 segundos para manter a conexão saudável em segundo plano
     this.pingInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ t: 'ping' }));
+      this.sendPing();
+    }, 5000);
+
+    // Watchdog: se não receber resposta em 15 segundos, força reconexão
+    this.watchdogTimer = setInterval(() => {
+      if (this.isConnected() && Date.now() - this.lastActivity > 15000) {
+        this.handleDisconnect();
       }
-    }, 10000);
+    }, 5000);
   }
 
   private stopHeartbeat(): void {
@@ -228,14 +407,45 @@ class SaimoConnectService {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
   }
 
   private handleDisconnect(): void {
     this.stopHeartbeat();
+    hideConnectNotification();
     useConnectStore.getState().setStatus('disconnected');
+
+    if (!this.userExplicitlyDisconnected && this.autoConnect) {
+      this.scheduleReconnect();
+    }
   }
 
-  disconnect(): void {
+  /** Agenda reconexão automática resiliente com backoff curto */
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.isConnected() && !this.userExplicitlyDisconnected && this.autoConnect) {
+        this.reconnect();
+      }
+    }, 2000);
+  }
+
+  /** Tenta reconectar imediatamente à última TV ou busca na rede */
+  reconnect(): void {
+    if (this.isConnected()) return;
+    const target = this.currentIp || this.lastKnownIp;
+    if (target) {
+      this.connect(target, this.currentPin || undefined);
+    } else {
+      this.discoverTvs();
+    }
+  }
+
+  private disconnectInternal(): void {
     this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -247,6 +457,16 @@ class SaimoConnectService {
       } catch (_e) {}
       this.ws = null;
     }
+  }
+
+  /** Desconecta explicitamente a pedido do usuário */
+  disconnect(userInitiated = true): void {
+    if (userInitiated) {
+      this.userExplicitlyDisconnected = true;
+      this.autoConnect = false;
+    }
+    this.disconnectInternal();
+    hideConnectNotification();
     useConnectStore.getState().setStatus('disconnected');
     useConnectStore.getState().setTvState(null);
   }
@@ -262,7 +482,7 @@ class SaimoConnectService {
     return false;
   }
 
-  // Comandos auxiliares de alta conveniência
+  // Comandos auxiliares de conveniência
   tuneChannel(channel: string, screen?: number): void {
     this.sendCommand({
       t: 'tune',

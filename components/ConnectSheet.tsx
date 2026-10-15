@@ -74,7 +74,7 @@ export default function ConnectSheet() {
   };
 
   const handleDisconnect = () => {
-    saimoConnect.disconnect();
+    saimoConnect.disconnect(true);
   };
 
   if (!visible) return null;

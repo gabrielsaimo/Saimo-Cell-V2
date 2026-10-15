@@ -19,7 +19,8 @@ import { downloadManager } from '../services/downloadManager';
 import { useDownloadStore } from '../stores/downloadStore';
 import { initNotifications } from '../services/downloadNotifications';
 import { iniciar as iniciarTelemetria } from '../services/telemetria';
-import { initConnectStore } from '../stores/connectStore';
+import { saimoConnect } from '../services/saimoConnect';
+import { useConnectStore } from '../stores/connectStore';
 
 // O monitor conta a abertura já na subida do bundle, antes da primeira tela.
 iniciarTelemetria();
@@ -45,8 +46,8 @@ export default function RootLayout() {
     // Request notification permission immediately on app open (before any download)
     initNotifications().catch(() => {});
 
-    // Inicializa o Saimo Connect (carrega identidade do celular e último aparelho)
-    initConnectStore().catch((e) => console.warn('[Layout] initConnectStore error:', e));
+    // Inicializa o Saimo Connect (carrega identidade do celular e auto-conecta ao aparelho)
+    saimoConnect.init().catch((e) => console.warn('[Layout] saimoConnect.init error:', e));
 
     // downloadManager.init reuses initNotifications (idempotent) + reconciles bg downloads
     downloadManager.init().catch((e) => console.warn('[Layout] downloadManager.init error:', e));
@@ -55,6 +56,11 @@ export default function RootLayout() {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as any;
       if (!data) return;
+
+      if (data.type === 'connect') {
+        useConnectStore.getState().setRemoteVisible(true);
+        return;
+      }
 
       if (data.type === 'completed' && data.taskId) {
         const item = useDownloadStore.getState().getItem(data.taskId);
