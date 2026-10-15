@@ -19,6 +19,7 @@ import CategoryTabs from '../../components/CategoryTabs';
 import ChannelList from '../../components/ChannelList';
 import PinModal from '../../components/PinModal';
 import EPGGuideModal from '../../components/EPGGuideModal';
+import CastAction from '../../components/CastAction';
 import * as telemetria from '../../services/telemetria';
 import { plural } from '../../utils/plural';
 
@@ -144,6 +145,7 @@ export default function HomeScreen() {
             <Text style={styles.subtitle}>{plural(channels.length, 'canal', 'canais')}</Text>
           </View>
           <View style={styles.headerActions}>
+            <CastAction onlyDialog style={styles.searchButton} />
             <TouchableOpacity
               style={styles.searchButton}
               onPress={() => setShowEPGGuide(true)}

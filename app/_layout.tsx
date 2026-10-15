@@ -11,10 +11,15 @@ import { Colors } from '../constants/Colors';
 
 import Updater from '../components/Updater';
 import Abertura from '../components/Abertura';
+import ConnectAudioHost from '../components/ConnectAudioHost';
+import ConnectSheet from '../components/ConnectSheet';
+import ConnectRemote from '../components/ConnectRemote';
+import MultiAudioPanel from '../components/MultiAudioPanel';
 import { downloadManager } from '../services/downloadManager';
 import { useDownloadStore } from '../stores/downloadStore';
 import { initNotifications } from '../services/downloadNotifications';
 import { iniciar as iniciarTelemetria } from '../services/telemetria';
+import { initConnectStore } from '../stores/connectStore';
 
 // O monitor conta a abertura já na subida do bundle, antes da primeira tela.
 iniciarTelemetria();
@@ -39,6 +44,9 @@ export default function RootLayout() {
   useEffect(() => {
     // Request notification permission immediately on app open (before any download)
     initNotifications().catch(() => {});
+
+    // Inicializa o Saimo Connect (carrega identidade do celular e último aparelho)
+    initConnectStore().catch((e) => console.warn('[Layout] initConnectStore error:', e));
 
     // downloadManager.init reuses initNotifications (idempotent) + reconciles bg downloads
     downloadManager.init().catch((e) => console.warn('[Layout] downloadManager.init error:', e));
@@ -79,6 +87,10 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <Updater />
+      <ConnectAudioHost />
+      <ConnectSheet />
+      <ConnectRemote />
+      <MultiAudioPanel />
       <StatusBar style="light" />
       <Stack
         screenOptions={{

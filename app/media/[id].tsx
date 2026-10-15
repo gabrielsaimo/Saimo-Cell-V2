@@ -126,8 +126,10 @@ export default function MediaDetailScreen() {
       url: media.url,
       title: media.tmdb?.title || media.name,
       poster: media.tmdb?.posterHD || media.tmdb?.poster,
+      key: media.id,
+      startTime: progress?.progress,
     };
-  }, [media]);
+  }, [media, progress?.progress]);
 
   const handleActorPress = useCallback((actor: CastMember) => {
     router.push({

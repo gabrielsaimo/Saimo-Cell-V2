@@ -189,6 +189,10 @@ export default function SeriesDetailScreen() {
       url: ep.url,
       title: `${series.name} - T${season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ''}`,
       poster: series.tmdb?.posterHD || series.tmdb?.poster,
+      key: series.id,
+      temporada: Number(season) || 1,
+      episodio: ep.episode,
+      startTime: progress?.progress,
     };
   }, [series, progress, episodes, selectedSeason]);
 

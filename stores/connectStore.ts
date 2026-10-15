@@ -1,0 +1,161 @@
+import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Network from 'expo-network';
+import { Platform } from 'react-native';
+
+export interface TvSource {
+  url: string;
+  referer?: string | null;
+  userAgent?: string | null;
+  keyId?: string | null;
+  key?: string | null;
+}
+
+export interface TvScreen {
+  idx: number;
+  channel: string;
+  num: number;
+  logo: string | null;
+  program: string | null;
+  source: TvSource;
+  sourceIndex: number;
+}
+
+export interface TvState {
+  mode: 'idle' | 'live' | 'vod' | 'radio';
+  playing: boolean;
+  multi: boolean;
+  active: number; // 0 ou 1
+  tvAudio: '0' | '1' | 'mute';
+  screens: TvScreen[];
+  vod?: {
+    title: string;
+    subtitle?: string;
+    poster?: string;
+    pos: number;
+    dur: number;
+    key: string;
+  };
+  volume: number;
+  muted: boolean;
+  phoneAudio?: Array<{
+    cid: string;
+    name: string;
+    src: '0' | '1' | 'both' | 'none';
+  }>;
+}
+
+export interface DiscoveredTv {
+  id: string;
+  name: string;
+  ip: string;
+  port: number;
+  version?: string;
+  lastSeen: number;
+}
+
+export type ConnectionStatus =
+  | 'disconnected'
+  | 'discovering'
+  | 'connecting'
+  | 'pending'
+  | 'connected';
+
+export type PhoneAudioMode = 'none' | '0' | '1' | 'both';
+
+interface ConnectStoreState {
+  cid: string;
+  phoneName: string;
+  status: ConnectionStatus;
+  discoveredTvs: DiscoveredTv[];
+  connectedTv: DiscoveredTv | null;
+  tvState: TvState | null;
+  phoneAudioMode: PhoneAudioMode;
+  audioSyncDelayMs: number;
+  isSheetVisible: boolean;
+  isRemoteVisible: boolean;
+  isMultiAudioVisible: boolean;
+  textRequest: { hint: string; value: string } | null;
+
+  // Ações
+  setCid: (cid: string) => void;
+  setPhoneName: (name: string) => void;
+  setStatus: (status: ConnectionStatus) => void;
+  setDiscoveredTvs: (tvs: DiscoveredTv[]) => void;
+  addDiscoveredTv: (tv: DiscoveredTv) => void;
+  setConnectedTv: (tv: DiscoveredTv | null) => void;
+  setTvState: (state: TvState | null) => void;
+  setPhoneAudioMode: (mode: PhoneAudioMode) => void;
+  setAudioSyncDelayMs: (delay: number) => void;
+  setSheetVisible: (visible: boolean) => void;
+  setRemoteVisible: (visible: boolean) => void;
+  setMultiAudioVisible: (visible: boolean) => void;
+  setTextRequest: (req: { hint: string; value: string } | null) => void;
+}
+
+const STORAGE_KEY_CID = '@saimo_connect_cid';
+const STORAGE_KEY_LAST_TV = '@saimo_connect_last_tv';
+const STORAGE_KEY_PHONE_NAME = '@saimo_connect_phone_name';
+
+export const useConnectStore = create<ConnectStoreState>((set, get) => ({
+  cid: '',
+  phoneName: Platform.OS === 'ios' ? 'iPhone' : 'Celular Android',
+  status: 'disconnected',
+  discoveredTvs: [],
+  connectedTv: null,
+  tvState: null,
+  phoneAudioMode: 'none',
+  audioSyncDelayMs: 0,
+  isSheetVisible: false,
+  isRemoteVisible: false,
+  isMultiAudioVisible: false,
+  textRequest: null,
+
+  setCid: (cid) => set({ cid }),
+  setPhoneName: (phoneName) => set({ phoneName }),
+  setStatus: (status) => set({ status }),
+  setDiscoveredTvs: (discoveredTvs) => set({ discoveredTvs }),
+  addDiscoveredTv: (tv) => {
+    const list = get().discoveredTvs.filter((item) => item.id !== tv.id);
+    set({ discoveredTvs: [tv, ...list] });
+  },
+  setConnectedTv: (connectedTv) => {
+    set({ connectedTv });
+    if (connectedTv) {
+      AsyncStorage.setItem(STORAGE_KEY_LAST_TV, JSON.stringify(connectedTv)).catch(() => {});
+    }
+  },
+  setTvState: (tvState) => {
+    set({ tvState });
+    // Se a TV entrar em multiTela e o celular estiver conectado, podemos abrir ou destacar o painel
+  },
+  setPhoneAudioMode: (phoneAudioMode) => set({ phoneAudioMode }),
+  setAudioSyncDelayMs: (audioSyncDelayMs) => set({ audioSyncDelayMs }),
+  setSheetVisible: (isSheetVisible) => set({ isSheetVisible }),
+  setRemoteVisible: (isRemoteVisible) => set({ isRemoteVisible }),
+  setMultiAudioVisible: (isMultiAudioVisible) => set({ isMultiAudioVisible }),
+  setTextRequest: (textRequest) => set({ textRequest }),
+}));
+
+// Inicializador de persistência leve
+export async function initConnectStore(): Promise<void> {
+  try {
+    let cid = await AsyncStorage.getItem(STORAGE_KEY_CID);
+    if (!cid) {
+      cid = 'cell-' + Math.random().toString(36).substring(2, 10) + '-' + Date.now().toString(36);
+      await AsyncStorage.setItem(STORAGE_KEY_CID, cid);
+    }
+    useConnectStore.getState().setCid(cid);
+
+    const savedName = await AsyncStorage.getItem(STORAGE_KEY_PHONE_NAME);
+    if (savedName) {
+      useConnectStore.getState().setPhoneName(savedName);
+    }
+
+    const lastTvJson = await AsyncStorage.getItem(STORAGE_KEY_LAST_TV);
+    if (lastTvJson) {
+      const lastTv = JSON.parse(lastTvJson) as DiscoveredTv;
+      useConnectStore.getState().addDiscoveredTv(lastTv);
+    }
+  } catch (_e) {}
+}

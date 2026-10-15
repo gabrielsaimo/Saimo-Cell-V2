@@ -18,6 +18,8 @@ import { Colors, BorderRadius, Spacing, Typography, Shadows } from '../constants
 import { useFavoritesStore } from '../stores/favoritesStore';
 import { useSettingsStore, type SettingsStore } from '../stores/settingsStore';
 import { getCurrentProgram, onEPGUpdate } from '../services/epgService';
+import { useConnectStore } from '../stores/connectStore';
+import { saimoConnect } from '../services/saimoConnect';
 
 interface ChannelCardProps {
   channel: Channel;
@@ -97,8 +99,33 @@ const ChannelCard = memo(({ channel }: ChannelCardProps) => {
 
   const handleOptionCast = useCallback(() => {
     setShowOptions(false);
+    const store = useConnectStore.getState();
+    if (store.status === 'connected' && store.connectedTv) {
+      if (store.tvState?.multi) {
+        Alert.alert(
+          'Sintonizar na TV',
+          `Em qual tela deseja colocar "${channel.name}"?`,
+          [
+            {
+              text: 'Canal 1 (Esquerda)',
+              onPress: () => saimoConnect.tuneChannel(channel.name, 0),
+            },
+            {
+              text: 'Canal 2 (Direita)',
+              onPress: () => saimoConnect.tuneChannel(channel.name, 1),
+            },
+            { text: 'Cancelar', style: 'cancel' },
+          ]
+        );
+        return;
+      }
+      saimoConnect.tuneChannel(channel.name);
+      Alert.alert('Saimo Connect', `Sintonizando "${channel.name}" na ${store.connectedTv.name}...`);
+      return;
+    }
+
     if (!client) {
-      Alert.alert('Google Cast', 'Nenhum dispositivo Cast conectado. Abra o menu Cast e conecte um Chromecast.');
+      store.setSheetVisible(true);
       return;
     }
     client.loadMedia({

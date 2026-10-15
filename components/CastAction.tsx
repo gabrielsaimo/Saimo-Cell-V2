@@ -4,6 +4,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import GoogleCast, { CastButton, useRemoteMediaClient } from 'react-native-google-cast';
 
 import { Colors } from '../constants/Colors';
+import { useConnectStore } from '../stores/connectStore';
+import { saimoConnect } from '../services/saimoConnect';
 
 export interface CastPayload {
   url: string;
@@ -11,6 +13,11 @@ export interface CastPayload {
   poster?: string;
   /** Segundos já assistidos, para a TV continuar de onde parou. */
   startTime?: number;
+  /** Chave única de VOD se disponível */
+  key?: string;
+  temporada?: number;
+  episodio?: number;
+  fonte?: number;
 }
 
 interface CastActionProps {
@@ -27,21 +34,6 @@ interface CastActionProps {
   size?: number;
 }
 
-/**
- * O botão "Transmitir".
- *
- * Antes este botão só funcionava quando já existia uma sessão de Cast aberta —
- * e não havia, em tela nenhuma do aplicativo, como abrir uma: o botão nativo
- * que lista os aparelhos só existia dentro do player. Tocar em transmitir num
- * filme, portanto, nunca fazia nada além de avisar que não havia aparelho
- * conectado.
- *
- * Agora o toque abre a lista de aparelhos do próprio Google Cast quando não há
- * sessão, e assim que a sessão nasce o título entra sozinho. O `CastButton`
- * nativo continua montado, invisível: no Android, `showCastDialog` só abre se
- * ele estiver em algum lugar da tela.
- */
-/** Por que a lista não abriu: Play Services fora, ou nenhum aparelho na rede. */
 async function avisarSemAparelho(): Promise<void> {
   const estado = await GoogleCast.getPlayServicesState().catch(() => null);
   if (estado && estado !== 'success') {
@@ -55,69 +47,191 @@ async function avisarSemAparelho(): Promise<void> {
 }
 
 export default function CastAction({
-  resolve, onlyDialog = false, style, color = Colors.text, size = 24,
+  resolve,
+  onlyDialog = false,
+  style,
+  color = Colors.text,
+  size = 24,
 }: CastActionProps) {
   const client = useRemoteMediaClient();
   const [pending, setPending] = useState<CastPayload | null>(null);
   const lastSent = useRef<string>('');
 
-  const enviar = useCallback((payload: CastPayload, client_: NonNullable<typeof client>) => {
-    const marca = `${payload.url}@${Math.round(payload.startTime ?? 0)}`;
-    if (lastSent.current === marca) return;
-    lastSent.current = marca;
-    client_.loadMedia({
-      mediaInfo: {
-        contentUrl: payload.url,
-        metadata: {
-          type: 'movie',
-          title: payload.title,
-          images: payload.poster ? [{ url: payload.poster }] : [],
-        },
-      },
-      startTime: payload.startTime,
-      autoplay: true,
-    }).catch((e: unknown) => {
-      Alert.alert('Transmitir', 'Não foi possível enviar para a TV. Tente de novo.');
-      console.warn('[Cast] loadMedia falhou:', e);
-    });
-  }, []);
+  const connectStatus = useConnectStore((s) => s.status);
+  const connectedTv = useConnectStore((s) => s.connectedTv);
+  const tvState = useConnectStore((s) => s.tvState);
+  const setSheetVisible = useConnectStore((s) => s.setSheetVisible);
+  const setRemoteVisible = useConnectStore((s) => s.setRemoteVisible);
+  const setMultiAudioVisible = useConnectStore((s) => s.setMultiAudioVisible);
 
-  // A sessão nasce depois do toque: o título esperava aqui.
+  const isSaimoConnected = connectStatus === 'connected' && !!connectedTv;
+  const isCastConnected = !!client || isSaimoConnected;
+
+  const enviarGoogleCast = useCallback(
+    (payload: CastPayload, client_: NonNullable<typeof client>) => {
+      const marca = `${payload.url}@${Math.round(payload.startTime ?? 0)}`;
+      if (lastSent.current === marca) return;
+      lastSent.current = marca;
+      client_
+        .loadMedia({
+          mediaInfo: {
+            contentUrl: payload.url,
+            metadata: {
+              type: 'movie',
+              title: payload.title,
+              images: payload.poster ? [{ url: payload.poster }] : [],
+            },
+          },
+          startTime: payload.startTime,
+          autoplay: true,
+        })
+        .catch((e: unknown) => {
+          Alert.alert('Transmitir', 'Não foi possível enviar para o Chromecast.');
+          console.warn('[Cast] loadMedia falhou:', e);
+        });
+    },
+    [],
+  );
+
+  const enviarSaimoTv = useCallback((payload: CastPayload) => {
+    if (payload.key) {
+      saimoConnect.playVod(
+        payload.key,
+        payload.temporada,
+        payload.episodio,
+        payload.fonte,
+      );
+    } else {
+      saimoConnect.sendCommand({
+        t: 'playMedia',
+        url: payload.url,
+        title: payload.title,
+        poster: payload.poster,
+        startTime: payload.startTime,
+      });
+    }
+    Alert.alert('Saimo Connect', `Enviado para ${connectedTv?.name || 'sua TV'}!`);
+  }, [connectedTv]);
+
+  // A sessão do Google Cast nasce depois do toque
   useEffect(() => {
     if (!client || !pending) return;
-    enviar(pending, client);
+    enviarGoogleCast(pending, client);
     setPending(null);
-  }, [client, pending, enviar]);
+  }, [client, pending, enviarGoogleCast]);
 
   const aoTocar = useCallback(async () => {
-    if (onlyDialog) {
-      const abriu = await GoogleCast.showCastDialog().catch(() => false);
-      if (!abriu) await avisarSemAparelho();
+    // 1. Se Saimo TV estiver conectada:
+    if (isSaimoConnected) {
+      if (onlyDialog) {
+        const botoes: any[] = [
+          {
+            text: 'Controle Remoto',
+            onPress: () => setRemoteVisible(true),
+          },
+        ];
+
+        if (tvState?.multi) {
+          botoes.push({
+            text: 'Áudio Multi-Tela',
+            onPress: () => setMultiAudioVisible(true),
+          });
+        }
+
+        botoes.push({
+          text: 'Gerenciar Aparelhos',
+          onPress: () => setSheetVisible(true),
+        });
+
+        botoes.push({
+          text: 'Google Cast',
+          onPress: async () => {
+            const abriu = await GoogleCast.showCastDialog().catch(() => false);
+            if (!abriu) await avisarSemAparelho();
+          },
+        });
+
+        botoes.push({ text: 'Fechar', style: 'cancel' });
+
+        Alert.alert(connectedTv?.name || 'Saimo TV', 'O que deseja fazer?', botoes);
+        return;
+      }
+
+      const payload = resolve?.() ?? null;
+      if (!payload?.url) {
+        setRemoteVisible(true);
+        return;
+      }
+
+      Alert.alert(
+        'Transmitir Título',
+        `Deseja reproduzir "${payload.title}" na TV?`,
+        [
+          {
+            text: `Reproduzir na ${connectedTv?.name || 'TV'}`,
+            onPress: () => enviarSaimoTv(payload),
+          },
+          {
+            text: 'Google Cast',
+            onPress: async () => {
+              if (client) {
+                enviarGoogleCast(payload, client);
+              } else {
+                setPending(payload);
+                const abriu = await GoogleCast.showCastDialog().catch(() => false);
+                if (!abriu) {
+                  setPending(null);
+                  await avisarSemAparelho();
+                }
+              }
+            },
+          },
+          { text: 'Cancelar', style: 'cancel' },
+        ],
+      );
       return;
     }
-    const payload = resolve?.() ?? null;
-    if (!payload?.url) {
-      Alert.alert('Transmitir', 'Este título ainda não tem uma fonte para enviar à TV.');
-      return;
-    }
+
+    // 2. Se Google Cast já estiver conectado
     if (client) {
-      enviar(payload, client);
-      return;
+      if (onlyDialog) {
+        await GoogleCast.showCastDialog().catch(() => false);
+        return;
+      }
+      const payload = resolve?.() ?? null;
+      if (payload?.url) {
+        enviarGoogleCast(payload, client);
+        return;
+      }
     }
-    setPending(payload);
-    const abriu = await GoogleCast.showCastDialog().catch(() => false);
-    if (!abriu) {
-      setPending(null);
-      await avisarSemAparelho();
-    }
-  }, [resolve, onlyDialog, client, enviar]);
+
+    // 3. Não está conectado a nenhum: abre Saimo Connect Sheet
+    // O usuário escolhe a TV Box ou clica em Google Cast
+    setSheetVisible(true);
+  }, [
+    isSaimoConnected,
+    onlyDialog,
+    connectedTv,
+    tvState?.multi,
+    setRemoteVisible,
+    setMultiAudioVisible,
+    setSheetVisible,
+    resolve,
+    enviarSaimoTv,
+    client,
+    enviarGoogleCast,
+  ]);
 
   return (
     <View style={styles.wrapper}>
       <TouchableOpacity style={style} onPress={aoTocar} accessibilityLabel="Transmitir">
-        <MaterialIcons name="cast" size={size} color={client ? Colors.primary : color} />
+        <MaterialIcons
+          name={isSaimoConnected ? 'cast-connected' : 'cast'}
+          size={size}
+          color={isCastConnected ? Colors.primary : color}
+        />
       </TouchableOpacity>
-      {/* Invisível, mas montado: sem ele o Android não abre a lista. */}
+      {/* Invisível, mas montado: sem ele o Android não abre a lista do Google Cast. */}
       <CastButton style={styles.hidden} />
     </View>
   );
