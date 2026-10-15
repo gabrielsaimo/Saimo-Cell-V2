@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   AppState,
+  Alert,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { Image } from 'expo-image';
@@ -16,6 +17,8 @@ import { router, useFocusEffect } from 'expo-router';
 
 import { Colors, Typography, Spacing, BorderRadius } from '../../constants/Colors';
 import { useChannelStore } from '../../stores/channelStore';
+import { useConnectStore } from '../../stores/connectStore';
+import { saimoConnect } from '../../services/saimoConnect';
 import { acabou, aoVivo, buscarJogos, type Jogo } from '../../services/eventos';
 import { plural } from '../../utils/plural';
 
@@ -64,7 +67,42 @@ function Escudo({ uri }: { uri: string }) {
 
 const CartaoJogo = React.memo(function CartaoJogo({ jogo, agora }: { jogo: Jogo; agora: number }) {
   const vivo = aoVivo(jogo, agora);
-  const abrir = () => router.push({ pathname: '/player/[id]', params: { id: jogo.canal.id } });
+  const isSaimoConnected = useConnectStore((s) => s.status === 'connected' && !!s.connectedTv);
+  const connectedTv = useConnectStore((s) => s.connectedTv);
+
+  const abrirNoCelular = () => {
+    router.push({ pathname: '/player/[id]', params: { id: jogo.canal.id } });
+  };
+
+  const abrirNaTv = () => {
+    saimoConnect.tuneChannel(jogo.canal.name);
+    Alert.alert('Saimo Connect', `Sintonizando ${jogo.canal.name} em ${connectedTv?.name || 'sua TV'}!`);
+  };
+
+  const abrir = () => {
+    if (isSaimoConnected) {
+      Alert.alert(
+        'Assistir Evento',
+        `Onde deseja assistir a este jogo?\n\n${jogo.casa} x ${jogo.fora}\nCanal: ${jogo.canal.name}`,
+        [
+          {
+            text: `Na TV Box (${connectedTv?.name || 'TV'})`,
+            onPress: abrirNaTv,
+          },
+          {
+            text: 'No Celular',
+            onPress: abrirNoCelular,
+          },
+          {
+            text: 'Cancelar',
+            style: 'cancel',
+          },
+        ]
+      );
+    } else {
+      abrirNoCelular();
+    }
+  };
 
   return (
     <TouchableOpacity

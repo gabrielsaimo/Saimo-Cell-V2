@@ -15,6 +15,9 @@ export interface CastPayload {
   startTime?: number;
   /** Chave única de VOD se disponível */
   key?: string;
+  letter?: string;
+  year?: string;
+  isSeries?: boolean;
   temporada?: number;
   episodio?: number;
   fonte?: number;
@@ -94,22 +97,20 @@ export default function CastAction({
   );
 
   const enviarSaimoTv = useCallback((payload: CastPayload) => {
-    if (payload.key) {
-      saimoConnect.playVod(
-        payload.key,
-        payload.temporada,
-        payload.episodio,
-        payload.fonte,
-      );
-    } else {
-      saimoConnect.sendCommand({
-        t: 'playMedia',
-        url: payload.url,
-        title: payload.title,
-        poster: payload.poster,
-        startTime: payload.startTime,
-      });
-    }
+    saimoConnect.sendCommand({
+      t: 'playVod',
+      key: payload.key || '',
+      url: payload.url,
+      title: payload.title,
+      poster: payload.poster,
+      startTime: payload.startTime,
+      letter: payload.letter,
+      year: payload.year,
+      isSeries: payload.isSeries,
+      temporada: payload.temporada,
+      episodio: payload.episodio,
+      fonte: payload.fonte,
+    });
     Alert.alert('Saimo Connect', `Enviado para ${connectedTv?.name || 'sua TV'}!`);
   }, [connectedTv]);
 

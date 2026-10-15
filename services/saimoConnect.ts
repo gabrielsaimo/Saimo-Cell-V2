@@ -322,8 +322,32 @@ class SaimoConnectService {
     this.sendCommand({ t: 'volume', delta, set, mute });
   }
 
-  playVod(key: string, temporada?: number, episodio?: number, fonte?: number): void {
-    this.sendCommand({ t: 'playVod', key, temporada, episodio, fonte });
+  playVod(
+    key: string,
+    temporada?: number,
+    episodio?: number,
+    fonte?: number,
+    extra?: {
+      url?: string;
+      title?: string;
+      poster?: string;
+      letter?: string;
+      year?: string;
+      isSeries?: boolean;
+      startTime?: number;
+    }
+  ): void {
+    this.sendCommand({ t: 'playVod', key, temporada, episodio, fonte, ...extra });
+  }
+
+  playMedia(
+    url: string,
+    title?: string,
+    poster?: string,
+    startTime?: number,
+    extra?: object
+  ): void {
+    this.sendCommand({ t: 'playMedia', url, title, poster, startTime, ...extra });
   }
 
   playPause(): void {

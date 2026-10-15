@@ -26,6 +26,7 @@ import DownloadButton from '../../components/DownloadButton';
 import CastAction from '../../components/CastAction';
 import SourceSheet from '../../components/SourceSheet';
 import { primeiraFonteBaixavel } from '../../services/downloadUtils';
+import { parseVodId } from '../../services/saimoSources';
 import type { MediaItem, Episode, CastMember } from '../../types';
 
 const { width, height } = Dimensions.get('window');
@@ -185,11 +186,15 @@ export default function SeriesDetailScreen() {
       : episodes[0];
     const season = progress ? progress.season.toString() : selectedSeason;
     if (!ep?.url) return null;
+    const parsed = parseVodId(series.id);
     return {
       url: ep.url,
       title: `${series.name} - T${season} E${ep.episode}${ep.name ? ` · ${ep.name}` : ''}`,
       poster: series.tmdb?.posterHD || series.tmdb?.poster,
       key: series.id,
+      letter: parsed?.letter || '',
+      year: parsed?.year || series.tmdb?.year || '',
+      isSeries: true,
       temporada: Number(season) || 1,
       episodio: ep.episode,
       startTime: progress?.progress,
@@ -554,11 +559,18 @@ export default function SeriesDetailScreen() {
                 color={Colors.textSecondary}
                 resolve={() => {
                   if (!series || !ep.url) return null;
+                  const parsed = parseVodId(series.id);
                   return {
                     url: ep.url,
                     title: `${series.name} - T${selectedSeason} E${ep.episode}` +
                       (ep.name ? ` · ${ep.name}` : ''),
                     poster: series.tmdb?.posterHD || series.tmdb?.poster,
+                    key: series.id,
+                    letter: parsed?.letter || '',
+                    year: parsed?.year || series.tmdb?.year || '',
+                    isSeries: true,
+                    temporada: Number(selectedSeason) || 1,
+                    episodio: ep.episode,
                   };
                 }}
               />

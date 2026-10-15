@@ -25,6 +25,7 @@ import DownloadButton from '../../components/DownloadButton';
 import CastAction from '../../components/CastAction';
 import SourceSheet from '../../components/SourceSheet';
 import { primeiraFonteBaixavel } from '../../services/downloadUtils';
+import { parseVodId } from '../../services/saimoSources';
 import type { MediaItem, CastMember } from '../../types';
 
 const { height } = Dimensions.get('window');
@@ -122,11 +123,15 @@ export default function MediaDetailScreen() {
 
   const castPayload = useCallback(() => {
     if (!media?.url) return null;
+    const parsed = parseVodId(media.id);
     return {
       url: media.url,
       title: media.tmdb?.title || media.name,
       poster: media.tmdb?.posterHD || media.tmdb?.poster,
       key: media.id,
+      letter: parsed?.letter || '',
+      year: parsed?.year || media.tmdb?.year || '',
+      isSeries: false,
       startTime: progress?.progress,
     };
   }, [media, progress?.progress]);
