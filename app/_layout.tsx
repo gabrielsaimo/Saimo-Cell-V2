@@ -15,6 +15,7 @@ import ConnectAudioHost from '../components/ConnectAudioHost';
 import ConnectSheet from '../components/ConnectSheet';
 import ConnectRemote from '../components/ConnectRemote';
 import MultiAudioPanel from '../components/MultiAudioPanel';
+import RemoteFab from '../components/RemoteFab';
 import { downloadManager } from '../services/downloadManager';
 import { useDownloadStore } from '../stores/downloadStore';
 import { initNotifications } from '../services/downloadNotifications';
@@ -97,6 +98,7 @@ export default function RootLayout() {
       <ConnectSheet />
       <ConnectRemote />
       <MultiAudioPanel />
+      <RemoteFab />
       <StatusBar style="light" />
       <Stack
         screenOptions={{

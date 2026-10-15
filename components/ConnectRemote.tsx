@@ -9,6 +9,7 @@ import {
   ScrollView,
   Image,
   TextInput,
+  Platform,
 } from 'react-native';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
 import { Colors, Spacing, BorderRadius, Typography } from '../constants/Colors';
@@ -101,16 +102,22 @@ export default function ConnectRemote() {
     >
       <Pressable style={styles.backdrop} onPress={() => setVisible(false)}>
         <Pressable style={styles.container} onPress={() => {}}>
+          {/* Puxador da gaveta */}
           <View style={styles.handle} />
 
-          {/* Cabeçalho */}
+          {/* Cabeçalho do Controle */}
           <View style={styles.header}>
             <View style={styles.headerTitles}>
               <View style={styles.tvTitleRow}>
-                <MaterialIcons name="settings-remote" size={22} color={Colors.primary} />
-                <Text style={styles.title}>{connectedTv?.name || 'Controle Remoto'}</Text>
+                <MaterialIcons name="settings-remote" size={20} color={Colors.primary} />
+                <Text style={styles.title} numberOfLines={1}>
+                  {connectedTv?.name || 'Saimo TV'}
+                </Text>
+                <View style={styles.badgeConnected}>
+                  <View style={styles.statusDot} />
+                  <Text style={styles.statusText}>Conectado</Text>
+                </View>
               </View>
-              <Text style={styles.subtitle}>Conectado à TV</Text>
             </View>
             <TouchableOpacity
               style={styles.closeBtn}
@@ -121,16 +128,21 @@ export default function ConnectRemote() {
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.scroll} bounces={false} showsVerticalScrollIndicator={false}>
-            {/* NOW PLAYING BANNER */}
-            {tvState?.mode === 'live' && currentScreen && (
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            bounces={false}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* 1. NOW PLAYING PILL COMPACTO (GLASSMORPHISM) */}
+            {isLive && currentScreen ? (
               <View style={styles.nowPlayingCard}>
                 <View style={styles.npRow}>
                   {currentScreen.logo ? (
                     <Image source={{ uri: currentScreen.logo }} style={styles.npLogo} resizeMode="contain" />
                   ) : (
                     <View style={styles.npLogoFallback}>
-                      <MaterialIcons name="tv" size={24} color={Colors.textSecondary} />
+                      <MaterialIcons name="tv" size={18} color={Colors.textSecondary} />
                     </View>
                   )}
                   <View style={styles.npInfo}>
@@ -141,54 +153,54 @@ export default function ConnectRemote() {
                       {currentScreen.program || 'Ao Vivo'}
                     </Text>
                   </View>
+                  <View style={styles.npLiveBadge}>
+                    <Text style={styles.npLiveText}>AO VIVO</Text>
+                  </View>
                 </View>
 
-                {/* BOTÕES DE MULTI-TELA NO BANNER */}
-                <View style={styles.npActions}>
+                {/* AÇÕES RÁPIDAS COMPACTAS */}
+                <View style={styles.npActionsRow}>
                   <TouchableOpacity
-                    style={[styles.npActionBtn, isMulti && styles.npActionBtnActive]}
+                    style={[styles.npMiniPill, isMulti && styles.npMiniPillActive]}
                     onPress={() => saimoConnect.toggleMultiTela(!isMulti)}
                   >
                     <MaterialIcons
                       name={isMulti ? 'fullscreen-exit' : 'picture-in-picture'}
-                      size={18}
+                      size={14}
                       color={isMulti ? '#fff' : Colors.primaryLight}
                     />
-                    <Text style={[styles.npActionText, isMulti && styles.npActionTextActive]}>
+                    <Text style={[styles.npMiniPillText, isMulti && styles.npMiniPillTextActive]}>
                       {isMulti ? 'Tela Única' : 'Multi-Tela'}
                     </Text>
                   </TouchableOpacity>
 
                   {isMulti && (
                     <TouchableOpacity
-                      style={styles.npAudioBtn}
+                      style={[styles.npMiniPill, styles.npMiniPillAudio]}
                       onPress={() => {
                         setVisible(false);
                         setMultiAudioVisible(true);
                       }}
                     >
-                      <Ionicons name="headset" size={18} color="#fff" />
-                      <Text style={styles.npAudioBtnText}>Áudio Duplo</Text>
+                      <Ionicons name="headset" size={13} color="#fff" />
+                      <Text style={[styles.npMiniPillText, { color: '#fff' }]}>Áudio</Text>
                     </TouchableOpacity>
                   )}
 
                   <TouchableOpacity
-                    style={styles.npActionBtn}
+                    style={styles.npMiniPill}
                     onPress={() => saimoConnect.trocarFonte(1)}
                   >
-                    <Feather name="refresh-cw" size={16} color={Colors.textSecondary} />
-                    <Text style={styles.npActionText}>Mudar Fonte</Text>
+                    <Feather name="refresh-cw" size={13} color={Colors.textSecondary} />
+                    <Text style={styles.npMiniPillText}>Fonte</Text>
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
-
-            {/* SE ESTIVER NO VOD */}
-            {tvState?.mode === 'vod' && tvState.vod && (
+            ) : tvState?.mode === 'vod' && tvState.vod ? (
               <View style={styles.nowPlayingCard}>
                 <View style={styles.npRow}>
                   <View style={styles.npLogoFallback}>
-                    <MaterialIcons name="movie" size={24} color={Colors.secondary} />
+                    <MaterialIcons name="movie" size={18} color={Colors.secondary} />
                   </View>
                   <View style={styles.npInfo}>
                     <Text style={styles.npChannel} numberOfLines={1}>
@@ -200,214 +212,133 @@ export default function ConnectRemote() {
                   </View>
                 </View>
 
-                <View style={styles.vodControls}>
-                  <TouchableOpacity
-                    style={styles.vodBtn}
-                    onPress={() => saimoConnect.seek(-10000)}
-                  >
-                    <MaterialIcons name="replay-10" size={26} color="#fff" />
+                {/* CONTROLES DE REPRODUÇÃO VOD */}
+                <View style={styles.vodControlsRow}>
+                  <TouchableOpacity style={styles.vodMiniBtn} onPress={() => saimoConnect.seek(-10000)}>
+                    <MaterialIcons name="replay-10" size={20} color={Colors.text} />
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.vodBtnPlay}
-                    onPress={() => saimoConnect.playPause()}
-                  >
+                  <TouchableOpacity style={styles.vodPlayBtn} onPress={() => saimoConnect.playPause()}>
                     <MaterialIcons
                       name={tvState.playing ? 'pause' : 'play-arrow'}
-                      size={32}
+                      size={22}
                       color="#fff"
                     />
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.vodBtn}
-                    onPress={() => saimoConnect.seek(10000)}
-                  >
-                    <MaterialIcons name="forward-10" size={26} color="#fff" />
+                  <TouchableOpacity style={styles.vodMiniBtn} onPress={() => saimoConnect.seek(10000)}>
+                    <MaterialIcons name="forward-10" size={20} color={Colors.text} />
                   </TouchableOpacity>
                 </View>
               </View>
-            )}
+            ) : null}
 
-            {/* BARRA SUPERIOR DO CONTROLE: VOLTAR, HOME, MENU, NÚMEROS/BUSCAR/TECLADO */}
-            <View style={styles.topControlRow}>
-              <TouchableOpacity
-                style={styles.secondaryControlBtn}
-                onPress={() => handleKey('BACK')}
-              >
-                <Ionicons name="arrow-back" size={22} color={Colors.text} />
-                <Text style={styles.secondaryControlText}>Voltar</Text>
+            {/* 2. BARRA DE NAVEGAÇÃO PRINCIPAL (VOLTAR, HOME, MENU, TECLADO) */}
+            <View style={styles.navBar}>
+              <TouchableOpacity style={styles.navBtn} onPress={() => handleKey('BACK')} activeOpacity={0.7}>
+                <Ionicons name="arrow-back" size={20} color={Colors.text} />
+                <Text style={styles.navBtnText}>Voltar</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.secondaryControlBtn}
-                onPress={() => handleKey('HOME')}
-              >
-                <Ionicons name="home-outline" size={22} color={Colors.text} />
-                <Text style={styles.secondaryControlText}>Início</Text>
+              <TouchableOpacity style={styles.navBtn} onPress={() => handleKey('HOME')} activeOpacity={0.7}>
+                <Ionicons name="home-outline" size={20} color={Colors.text} />
+                <Text style={styles.navBtnText}>Início</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.secondaryControlBtn}
-                onPress={() => handleKey('MENU')}
-              >
-                <Ionicons name="menu-outline" size={22} color={Colors.text} />
-                <Text style={styles.secondaryControlText}>Menu</Text>
+              <TouchableOpacity style={styles.navBtn} onPress={() => handleKey('MENU')} activeOpacity={0.7}>
+                <Ionicons name="menu-outline" size={20} color={Colors.text} />
+                <Text style={styles.navBtnText}>Menu</Text>
               </TouchableOpacity>
 
               {isSearch ? (
                 <TouchableOpacity
-                  style={[styles.secondaryControlBtn, styles.secondaryControlBtnActive]}
+                  style={[styles.navBtn, styles.navBtnActive]}
                   onPress={() => {}}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="search" size={22} color={Colors.primaryLight} />
-                  <Text style={[styles.secondaryControlText, { color: Colors.primaryLight }]}>Buscar</Text>
-                </TouchableOpacity>
-              ) : isLive ? (
-                <TouchableOpacity
-                  style={[styles.secondaryControlBtn, showNumpad && styles.secondaryControlBtnActive]}
-                  onPress={() => setShowNumpad(!showNumpad)}
-                >
-                  <MaterialIcons name="dialpad" size={22} color={showNumpad ? Colors.primaryLight : Colors.text} />
-                  <Text style={[styles.secondaryControlText, showNumpad && { color: Colors.primaryLight }]}>Números</Text>
+                  <Ionicons name="search" size={20} color={Colors.primaryLight} />
+                  <Text style={[styles.navBtnText, { color: Colors.primaryLight }]}>Buscar</Text>
                 </TouchableOpacity>
               ) : (
                 <TouchableOpacity
-                  style={[styles.secondaryControlBtn, (showTextInput || textRequest) && styles.secondaryControlBtnActive]}
+                  style={[styles.navBtn, (showTextInput || textRequest) && styles.navBtnActive]}
                   onPress={() => setShowTextInput(!showTextInput)}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="keypad-outline" size={22} color={(showTextInput || textRequest) ? Colors.primaryLight : Colors.text} />
-                  <Text style={styles.secondaryControlText}>Teclado</Text>
+                  <Ionicons
+                    name="keypad-outline"
+                    size={20}
+                    color={showTextInput || textRequest ? Colors.primaryLight : Colors.text}
+                  />
+                  <Text style={[styles.navBtnText, (showTextInput || textRequest) && { color: Colors.primaryLight }]}>
+                    Digitar
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
 
-            {/* PESQUISA EM TEMPO REAL NA TV */}
+            {/* 3. CAMPO DE ENTRADA / BUSCA EM TEMPO REAL NA TV */}
             {isSearch && (
-              <View style={styles.searchCard}>
-                <View style={styles.searchHeaderRow}>
-                  <Ionicons name="search" size={18} color={Colors.primaryLight} />
-                  <Text style={styles.searchHeaderTitle}>Pesquisa em Tempo Real na TV</Text>
-                </View>
-                <View style={styles.searchBarRow}>
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Digite o que procura na TV..."
-                    placeholderTextColor={Colors.textMuted}
-                    value={searchText}
-                    onChangeText={handleSearchChange}
-                    autoFocus
-                    returnKeyType="search"
-                  />
-                  {searchText.length > 0 && (
-                    <TouchableOpacity
-                      style={styles.clearBtn}
-                      onPress={() => handleSearchChange('')}
-                    >
-                      <Ionicons name="close-circle" size={22} color={Colors.textSecondary} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <Text style={styles.searchHint}>
-                  Os resultados aparecem na TV automaticamente conforme você digita.
-                </Text>
-              </View>
-            )}
-
-            {/* TECLADO NUMÉRICO 0-9 (COMO CONTROLE REAL NA TV AO VIVO) */}
-            {isLive && showNumpad && (
-              <View style={styles.numpadContainer}>
-                {typedDigits.length > 0 && (
-                  <View style={styles.typedDigitsRow}>
-                    <Text style={styles.typedDigitsLabel}>Canal:</Text>
-                    <Text style={styles.typedDigitsValue}>{typedDigits}</Text>
-                  </View>
+              <View style={styles.searchBox}>
+                <Ionicons name="search" size={18} color={Colors.primaryLight} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Pesquisar em tempo real na TV..."
+                  placeholderTextColor={Colors.textMuted}
+                  value={searchText}
+                  onChangeText={handleSearchChange}
+                  autoFocus
+                  returnKeyType="search"
+                />
+                {searchText.length > 0 && (
+                  <TouchableOpacity onPress={() => handleSearchChange('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+                  </TouchableOpacity>
                 )}
-                <View style={styles.numpadGrid}>
-                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => (
-                    <TouchableOpacity
-                      key={n}
-                      style={styles.numpadBtn}
-                      onPress={() => handleNumber(n)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.numpadText}>{n}</Text>
-                    </TouchableOpacity>
-                  ))}
-                  <TouchableOpacity
-                    style={[styles.numpadBtn, styles.numpadActionBtn]}
-                    onPress={() => handleKey('MENU')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.numpadActionText}>MENU</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.numpadBtn}
-                    onPress={() => handleNumber('0')}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.numpadText}>0</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.numpadBtn, styles.numpadActionBtn]}
-                    onPress={handleClearDigits}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="backspace-outline" size={24} color={Colors.text} />
-                  </TouchableOpacity>
-                </View>
               </View>
             )}
 
-            {/* DIGITAÇÃO REMOTA / ENTRADA DE TEXTO NA TV (FORA DA BUSCA / TV AO VIVO) */}
-            {!isSearch && !isLive && (showTextInput || textRequest) && (
-              <View style={styles.keyboardCard}>
-                <Text style={styles.keyboardLabel}>
-                  {textRequest ? `A TV está pedindo: "${textRequest.hint}"` : 'Enviar texto para a TV:'}
-                </Text>
-                <View style={styles.keyboardRow}>
-                  <TextInput
-                    style={styles.keyboardInput}
-                    placeholder={textRequest?.hint || 'Digite algo para buscar...'}
-                    placeholderTextColor={Colors.textMuted}
-                    value={customText}
-                    onChangeText={setCustomText}
-                    autoFocus
-                    onSubmitEditing={handleSendCustomText}
-                    returnKeyType="send"
-                  />
-                  <TouchableOpacity
-                    style={styles.keyboardSendBtn}
-                    onPress={handleSendCustomText}
-                  >
-                    <Ionicons name="send" size={18} color="#fff" />
-                  </TouchableOpacity>
-                </View>
+            {!isSearch && (showTextInput || textRequest) && (
+              <View style={styles.keyboardBox}>
+                <TextInput
+                  style={styles.keyboardInput}
+                  placeholder={textRequest?.hint || 'Digite algo para a TV...'}
+                  placeholderTextColor={Colors.textMuted}
+                  value={customText}
+                  onChangeText={setCustomText}
+                  autoFocus
+                  onSubmitEditing={handleSendCustomText}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity style={styles.keyboardSendBtn} onPress={handleSendCustomText}>
+                  <Ionicons name="send" size={16} color="#fff" />
+                </TouchableOpacity>
               </View>
             )}
 
-            {/* D-PAD DIRECIONAL */}
-            <View style={styles.dpadContainer}>
-              <View style={styles.dpadCross}>
+            {/* 4. D-PAD CIRCULAR ERGONÔMICO (CENTRO DO CONTROLE) */}
+            <View style={styles.dpadSection}>
+              <View style={styles.dpadDisc}>
                 {/* UP */}
                 <TouchableOpacity
-                  style={[styles.dpadBtn, styles.dpadUp]}
+                  style={[styles.dpadDirectionBtn, styles.dpadUp]}
                   onPress={() => handleKey('UP')}
-                  activeOpacity={0.7}
+                  activeOpacity={0.65}
                 >
-                  <Ionicons name="chevron-up" size={32} color={Colors.text} />
+                  <Ionicons name="chevron-up" size={28} color={Colors.text} />
                 </TouchableOpacity>
 
-                {/* LEFT & RIGHT & OK */}
+                {/* LEFT & OK & RIGHT */}
                 <View style={styles.dpadMiddleRow}>
                   <TouchableOpacity
-                    style={[styles.dpadBtn, styles.dpadLeft]}
+                    style={[styles.dpadDirectionBtn, styles.dpadLeft]}
                     onPress={() => handleKey('LEFT')}
-                    activeOpacity={0.7}
+                    activeOpacity={0.65}
                   >
-                    <Ionicons name="chevron-back" size={32} color={Colors.text} />
+                    <Ionicons name="chevron-back" size={28} color={Colors.text} />
                   </TouchableOpacity>
 
+                  {/* CENTRO OK */}
                   <TouchableOpacity
-                    style={styles.dpadCenter}
+                    style={styles.dpadOkCenter}
                     onPress={() => handleKey('OK')}
                     activeOpacity={0.8}
                   >
@@ -415,74 +346,154 @@ export default function ConnectRemote() {
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={[styles.dpadBtn, styles.dpadRight]}
+                    style={[styles.dpadDirectionBtn, styles.dpadRight]}
                     onPress={() => handleKey('RIGHT')}
-                    activeOpacity={0.7}
+                    activeOpacity={0.65}
                   >
-                    <Ionicons name="chevron-forward" size={32} color={Colors.text} />
+                    <Ionicons name="chevron-forward" size={28} color={Colors.text} />
                   </TouchableOpacity>
                 </View>
 
                 {/* DOWN */}
                 <TouchableOpacity
-                  style={[styles.dpadBtn, styles.dpadDown]}
+                  style={[styles.dpadDirectionBtn, styles.dpadDown]}
                   onPress={() => handleKey('DOWN')}
-                  activeOpacity={0.7}
+                  activeOpacity={0.65}
                 >
-                  <Ionicons name="chevron-down" size={32} color={Colors.text} />
+                  <Ionicons name="chevron-down" size={28} color={Colors.text} />
                 </TouchableOpacity>
               </View>
             </View>
 
-            {/* CONTROLES INFERIORES: VOLUME E CANAL */}
-            <View style={styles.bottomPillars}>
-              {/* COLUNA VOLUME */}
-              <View style={styles.pillarCard}>
-                <Text style={styles.pillarTitle}>VOLUME</Text>
+            {/* 5. BLOCO INFERIOR: VOLUME, FERRAMENTAS/123 E CANAL */}
+            <View style={styles.bottomCluster}>
+              {/* ROCKER VOLUME */}
+              <View style={styles.rocker}>
                 <TouchableOpacity
-                  style={styles.pillarBtn}
+                  style={styles.rockerBtn}
                   onPress={() => saimoConnect.setVolume(5)}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="add" size={24} color={Colors.text} />
+                  <Ionicons name="add" size={22} color={Colors.text} />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.pillarBtnMute}
+                  style={styles.rockerMid}
                   onPress={() => saimoConnect.setVolume(undefined, undefined, !tvState?.muted)}
+                  activeOpacity={0.7}
                 >
                   <MaterialIcons
                     name={tvState?.muted ? 'volume-off' : 'volume-up'}
-                    size={20}
-                    color={tvState?.muted ? Colors.error : Colors.textSecondary}
+                    size={18}
+                    color={tvState?.muted ? Colors.error : Colors.primaryLight}
                   />
+                  <Text style={styles.rockerLabel}>VOL</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.pillarBtn}
+                  style={styles.rockerBtn}
                   onPress={() => saimoConnect.setVolume(-5)}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="remove" size={24} color={Colors.text} />
+                  <Ionicons name="remove" size={22} color={Colors.text} />
                 </TouchableOpacity>
               </View>
 
-              {/* COLUNA CANAL */}
-              <View style={styles.pillarCard}>
-                <Text style={styles.pillarTitle}>CANAL</Text>
+              {/* BLOCO CENTRAL: NÚMEROS / TECLADO / REPRODUÇÃO */}
+              <View style={styles.centerTools}>
+                {/* BOTÃO NÚMEROS 123 */}
                 <TouchableOpacity
-                  style={styles.pillarBtn}
-                  onPress={() => handleKey('CH_UP')}
+                  style={[styles.centerToolBtn, showNumpad && styles.centerToolBtnActive]}
+                  onPress={() => setShowNumpad(!showNumpad)}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="chevron-up" size={24} color={Colors.text} />
+                  <MaterialIcons name="dialpad" size={20} color={showNumpad ? '#fff' : Colors.primaryLight} />
+                  <Text style={[styles.centerToolText, showNumpad && { color: '#fff' }]}>123</Text>
                 </TouchableOpacity>
-                <View style={styles.pillarMidInfo}>
-                  <MaterialIcons name="live-tv" size={20} color={Colors.textSecondary} />
+
+                {/* PLAY/PAUSE OU MULTI */}
+                <TouchableOpacity
+                  style={styles.centerToolBtn}
+                  onPress={() => (isLive ? saimoConnect.toggleMultiTela(!isMulti) : saimoConnect.playPause())}
+                  activeOpacity={0.7}
+                >
+                  <MaterialIcons
+                    name={isLive ? (isMulti ? 'fullscreen' : 'picture-in-picture') : tvState?.playing ? 'pause' : 'play-arrow'}
+                    size={20}
+                    color={Colors.text}
+                  />
+                  <Text style={styles.centerToolText}>{isLive ? 'Multi' : 'Play'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* ROCKER CANAL */}
+              <View style={styles.rocker}>
+                <TouchableOpacity
+                  style={styles.rockerBtn}
+                  onPress={() => handleKey('CH_UP')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="chevron-up" size={22} color={Colors.text} />
+                </TouchableOpacity>
+                <View style={styles.rockerMid}>
+                  <MaterialIcons name="live-tv" size={18} color={Colors.primaryLight} />
+                  <Text style={styles.rockerLabel}>CH</Text>
                 </View>
                 <TouchableOpacity
-                  style={styles.pillarBtn}
+                  style={styles.rockerBtn}
                   onPress={() => handleKey('CH_DOWN')}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="chevron-down" size={24} color={Colors.text} />
+                  <Ionicons name="chevron-down" size={22} color={Colors.text} />
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* 6. MODAL/OVERLAY DO TECLADO NUMÉRICO (0-9) */}
+            {showNumpad && (
+              <View style={styles.numpadOverlay}>
+                <View style={styles.numpadHeader}>
+                  <Text style={styles.numpadTitle}>
+                    Canal: <Text style={styles.numpadDigits}>{typedDigits || '...'}</Text>
+                  </Text>
+                  <TouchableOpacity onPress={() => setShowNumpad(false)}>
+                    <Ionicons name="close-circle" size={20} color={Colors.textSecondary} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.numpadGrid}>
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => (
+                    <TouchableOpacity
+                      key={n}
+                      style={styles.numpadKey}
+                      onPress={() => handleNumber(n)}
+                      activeOpacity={0.65}
+                    >
+                      <Text style={styles.numpadKeyText}>{n}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity
+                    style={[styles.numpadKey, styles.numpadKeyAction]}
+                    onPress={() => handleKey('MENU')}
+                    activeOpacity={0.65}
+                  >
+                    <Text style={styles.numpadKeyActionText}>MENU</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.numpadKey}
+                    onPress={() => handleNumber('0')}
+                    activeOpacity={0.65}
+                  >
+                    <Text style={styles.numpadKeyText}>0</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.numpadKey, styles.numpadKeyAction]}
+                    onPress={handleClearDigits}
+                    activeOpacity={0.65}
+                  >
+                    <Ionicons name="backspace-outline" size={20} color={Colors.text} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </ScrollView>
         </Pressable>
       </Pressable>
@@ -493,31 +504,33 @@ export default function ConnectRemote() {
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
     justifyContent: 'flex-end',
   },
   container: {
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: '#161726',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.xxxl,
-    maxHeight: '92%',
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.xl,
+    maxHeight: '94%',
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   handle: {
-    width: 40,
+    width: 38,
     height: 4,
     borderRadius: 2,
     alignSelf: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    marginBottom: Spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    marginBottom: Spacing.sm,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
   },
   headerTitles: {
     flex: 1,
@@ -525,49 +538,71 @@ const styles = StyleSheet.create({
   tvTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
+    gap: 6,
   },
   title: {
     color: Colors.text,
-    fontSize: Typography.h3.fontSize,
+    fontSize: 16,
     fontWeight: '700',
+    maxWidth: '65%',
   },
-  subtitle: {
+  badgeConnected: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  statusDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: Colors.success,
+  },
+  statusText: {
     color: Colors.success,
-    fontSize: Typography.caption.fontSize,
+    fontSize: 10,
     fontWeight: '600',
-    marginTop: 2,
   },
   closeBtn: {
-    padding: Spacing.xs,
+    padding: 6,
   },
   scroll: {
     flexGrow: 0,
   },
+  scrollContent: {
+    paddingBottom: Spacing.md,
+  },
+
+  // 1. NOW PLAYING COMPACTO
   nowPlayingCard: {
-    backgroundColor: Colors.surfaceVariant,
+    backgroundColor: 'rgba(30, 31, 56, 0.75)',
     borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    padding: 10,
+    marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
   },
   npRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: Spacing.sm,
+    gap: 10,
   },
   npLogo: {
-    width: 36,
-    height: 36,
-    borderRadius: BorderRadius.xs,
+    width: 34,
+    height: 34,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
   },
   npLogoFallback: {
-    width: 36,
-    height: 36,
-    borderRadius: BorderRadius.xs,
-    backgroundColor: Colors.surface,
+    width: 34,
+    height: 34,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -576,348 +611,348 @@ const styles = StyleSheet.create({
   },
   npChannel: {
     color: Colors.text,
-    fontSize: Typography.body.fontSize,
+    fontSize: 13,
     fontWeight: '700',
   },
   npProgram: {
     color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
+    fontSize: 11,
     marginTop: 1,
   },
-  npActions: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
+  npLiveBadge: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
-  npActionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: Colors.surface,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  npActionBtnActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primaryLight,
-  },
-  npActionText: {
-    color: Colors.textSecondary,
-    fontSize: Typography.caption.fontSize,
-    fontWeight: '600',
-  },
-  npActionTextActive: {
+  npLiveText: {
     color: '#fff',
-  },
-  npAudioBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    backgroundColor: Colors.secondary,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-  },
-  npAudioBtnText: {
-    color: '#fff',
-    fontSize: Typography.caption.fontSize,
-    fontWeight: '600',
-  },
-  vodControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xl,
-    paddingVertical: Spacing.xs,
-  },
-  vodBtn: {
-    padding: Spacing.sm,
-  },
-  vodBtnPlay: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topControlRow: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
-    marginBottom: Spacing.md,
-  },
-  secondaryControlBtn: {
-    flex: 1,
-    backgroundColor: Colors.surfaceVariant,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 4,
-  },
-  secondaryControlBtnActive: {
-    borderColor: Colors.primary,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
-  },
-  secondaryControlText: {
-    color: Colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  keyboardCard: {
-    backgroundColor: Colors.surfaceVariant,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  keyboardLabel: {
-    color: Colors.primaryLight,
-    fontSize: Typography.caption.fontSize,
-    fontWeight: '600',
-    marginBottom: Spacing.xs,
-  },
-  keyboardRow: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
-  },
-  keyboardInput: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    color: Colors.text,
-    borderRadius: BorderRadius.sm,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    fontSize: Typography.body.fontSize,
-  },
-  keyboardSendBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.sm,
-    paddingHorizontal: Spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dpadContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: Spacing.md,
-  },
-  dpadCross: {
-    width: 210,
-    height: 210,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dpadBtn: {
-    backgroundColor: Colors.surfaceVariant,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  dpadUp: {
-    width: 70,
-    height: 65,
-    borderTopLeftRadius: BorderRadius.xl,
-    borderTopRightRadius: BorderRadius.xl,
-  },
-  dpadMiddleRow: {
-    flexDirection: 'row',
-    width: 210,
-    height: 70,
-  },
-  dpadLeft: {
-    width: 65,
-    height: 70,
-    borderTopLeftRadius: BorderRadius.xl,
-    borderBottomLeftRadius: BorderRadius.xl,
-  },
-  dpadCenter: {
-    width: 80,
-    height: 70,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: BorderRadius.sm,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    elevation: 4,
-  },
-  dpadOkText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  dpadRight: {
-    width: 65,
-    height: 70,
-    borderTopRightRadius: BorderRadius.xl,
-    borderBottomRightRadius: BorderRadius.xl,
-  },
-  dpadDown: {
-    width: 70,
-    height: 65,
-    borderBottomLeftRadius: BorderRadius.xl,
-    borderBottomRightRadius: BorderRadius.xl,
-  },
-  bottomPillars: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginTop: Spacing.sm,
-  },
-  pillarCard: {
-    flex: 1,
-    backgroundColor: Colors.surfaceVariant,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.sm,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  pillarTitle: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 9,
+    fontWeight: '800',
     letterSpacing: 0.5,
-    marginBottom: Spacing.xs,
   },
-  pillarBtn: {
-    width: '100%',
-    paddingVertical: Spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
-    marginVertical: 2,
-  },
-  pillarBtnMute: {
-    width: '100%',
-    paddingVertical: Spacing.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillarMidInfo: {
-    width: '100%',
-    paddingVertical: Spacing.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // BUSCA EM TEMPO REAL
-  searchCard: {
-    backgroundColor: Colors.surfaceVariant,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1.5,
-    borderColor: Colors.primary,
-  },
-  searchHeaderRow: {
+  npActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.xs,
+    gap: 8,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  searchHeaderTitle: {
-    color: Colors.primaryLight,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  searchBarRow: {
+  npMiniPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
+    gap: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  npMiniPillActive: {
+    backgroundColor: Colors.primary,
+  },
+  npMiniPillAudio: {
+    backgroundColor: 'rgba(139, 92, 246, 0.5)',
+  },
+  npMiniPillText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  npMiniPillTextActive: {
+    color: '#fff',
+  },
+  vodControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+    marginTop: 8,
+  },
+  vodMiniBtn: {
+    padding: 6,
+  },
+  vodPlayBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // 2. NAV BAR
+  navBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: BorderRadius.md,
+    padding: 4,
+    marginBottom: Spacing.sm,
+  },
+  navBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 7,
     borderRadius: BorderRadius.sm,
+    gap: 2,
+  },
+  navBtnActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+  },
+  navBtnText: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+
+  // 3. SEARCH & KEYBOARD
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    marginBottom: Spacing.sm,
     borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.sm,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
   },
   searchInput: {
     flex: 1,
     color: Colors.text,
-    paddingVertical: Spacing.sm,
-    fontSize: 15,
+    fontSize: 13,
+    padding: 0,
   },
-  clearBtn: {
-    padding: Spacing.xs,
-  },
-  searchHint: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    marginTop: 6,
-  },
-  // TECLADO NUMÉRICO 0-9
-  numpadContainer: {
-    backgroundColor: Colors.surfaceVariant,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: 'center',
-  },
-  typedDigitsRow: {
+  keyboardBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    marginBottom: Spacing.sm,
-    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    gap: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: BorderRadius.md,
     paddingHorizontal: Spacing.md,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.full,
+    paddingVertical: 6,
+    marginBottom: Spacing.sm,
   },
-  typedDigitsLabel: {
+  keyboardInput: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 13,
+    padding: 0,
+  },
+  keyboardSendBtn: {
+    backgroundColor: Colors.primary,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // 4. D-PAD DISCO CIRCULAR
+  dpadSection: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: Spacing.xs,
+  },
+  dpadDisc: {
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: '#1E1F38',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 6,
+      },
+    }),
+  },
+  dpadDirectionBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dpadUp: {
+    width: '100%',
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dpadDown: {
+    width: '100%',
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dpadMiddleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: 4,
+  },
+  dpadLeft: {
+    width: 48,
+    height: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dpadRight: {
+    width: 48,
+    height: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dpadOkCenter: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: Colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.5,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
+  },
+  dpadOkText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+
+  // 5. BLOCO INFERIOR (VOLUME, TOOLS, CANAL)
+  bottomCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: Spacing.sm,
+    gap: 12,
+  },
+  rocker: {
+    width: 64,
+    height: 124,
+    borderRadius: 32,
+    backgroundColor: '#1E1F38',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  rockerBtn: {
+    width: 54,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rockerMid: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 1,
+  },
+  rockerLabel: {
+    color: Colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  centerTools: {
+    flex: 1,
+    height: 124,
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  centerToolBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.07)',
+  },
+  centerToolBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primaryLight,
+  },
+  centerToolText: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // 6. TECLADO NUMÉRICO OVERLAY
+  numpadOverlay: {
+    marginTop: Spacing.sm,
+    backgroundColor: 'rgba(30, 31, 56, 0.95)',
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  numpadHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  numpadTitle: {
     color: Colors.textSecondary,
     fontSize: 12,
+    fontWeight: '600',
   },
-  typedDigitsValue: {
+  numpadDigits: {
     color: Colors.primaryLight,
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 2,
   },
   numpadGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    width: 240,
+    gap: 6,
     justifyContent: 'space-between',
-    gap: 10,
   },
-  numpadBtn: {
-    width: 70,
-    height: 52,
-    backgroundColor: Colors.surface,
-    borderRadius: BorderRadius.md,
+  numpadKey: {
+    width: '31%',
+    height: 42,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 2,
   },
-  numpadText: {
+  numpadKeyText: {
     color: Colors.text,
-    fontSize: 22,
+    fontSize: 17,
     fontWeight: '700',
   },
-  numpadActionBtn: {
+  numpadKeyAction: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  numpadActionText: {
+  numpadKeyActionText: {
     color: Colors.textSecondary,
     fontSize: 11,
     fontWeight: '700',
