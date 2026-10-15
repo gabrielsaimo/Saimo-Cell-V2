@@ -30,6 +30,8 @@ export default function ConnectSheet() {
   const [manualPin, setManualPin] = useState('');
   const [isSearching, setIsSearching] = useState(false);
 
+  const [justConnected, setJustConnected] = useState(false);
+
   // Ao abrir o modal, se não estiver conectado, inicia busca automática
   useEffect(() => {
     if (visible && status !== 'connected') {
@@ -37,16 +39,17 @@ export default function ConnectSheet() {
     }
   }, [visible]);
 
-  // Ao conectar com sucesso, abre o Controle Remoto automaticamente
+  // Ao conectar com sucesso após clicar em conectar, abre o Controle Remoto automaticamente
   useEffect(() => {
-    if (visible && status === 'connected') {
+    if (justConnected && visible && status === 'connected') {
+      setJustConnected(false);
       const timer = setTimeout(() => {
         setVisible(false);
         setRemoteVisible(true);
       }, 400);
       return () => clearTimeout(timer);
     }
-  }, [visible, status]);
+  }, [justConnected, visible, status]);
 
   const handleSearch = async () => {
     setIsSearching(true);
@@ -58,12 +61,14 @@ export default function ConnectSheet() {
   };
 
   const handleConnect = (tv: DiscoveredTv) => {
+    setJustConnected(true);
     saimoConnect.connect(tv.ip);
   };
 
   const handleManualConnect = () => {
     const ip = manualIp.trim();
     if (!ip) return;
+    setJustConnected(true);
     saimoConnect.connect(ip, manualPin.trim() || undefined);
     setShowManual(false);
   };
