@@ -104,18 +104,51 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     };
   }, [activeChannel, sourceIndex]);
 
+  const [resolvedDadinho, setResolvedDadinho] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeStream.url.includes('dadinhodetapioca.fun/play/')) {
+      setResolvedDadinho(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(activeStream.url, {
+      headers: { Referer: 'https://rdcanais.org/' },
+    })
+      .then((res) => res.text())
+      .then((html) => {
+        if (cancelled) return;
+        const match = html.match(/STREAM_URLS\s*=\s*\[\s*"([^"]+)"/);
+        if (match) {
+          const m3u8 = match[1].replace(/\\\//g, '/');
+          setResolvedDadinho(m3u8);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeStream.url]);
+
   // A fonte do player num objeto estável: um objeto novo a cada render fazia
   // o componente do vídeo comparar e reenviar a fonte a cada atualização.
-  const fonteDoPlayer = useMemo(() => ({
-    uri: activeStream.url,
-    headers: activeStream.headers,
-    // Há provedores que publicam o master HLS como text/plain e com
-    // extensão `.txt`. Como este campo já é uma fonte de mídia, todo
-    // `.txt` aqui deve ir explicitamente para o demuxer HLS.
-    type: activeStream.url.split('?')[0].toLowerCase().endsWith('.txt')
-      ? 'm3u8'
-      : undefined,
-  }), [activeStream.url, activeStream.headers]);
+  const fonteDoPlayer = useMemo(() => {
+    const isDadinho = activeStream.url.includes('dadinhodetapioca.fun');
+    const uri = (isDadinho && resolvedDadinho) ? resolvedDadinho : activeStream.url;
+    const headers = isDadinho
+      ? { ...(activeStream.headers ?? {}), Referer: 'https://dadinhodetapioca.fun/', Origin: 'https://dadinhodetapioca.fun' }
+      : activeStream.headers;
+    return {
+      uri,
+      headers,
+      // Há provedores que publicam o master HLS como text/plain e com
+      // extensão `.txt`. Como este campo já é uma fonte de mídia, todo
+      // `.txt` aqui deve ir explicitamente para o demuxer HLS.
+      type: (uri.split('?')[0].toLowerCase().endsWith('.txt') || isDadinho)
+        ? 'm3u8'
+        : undefined,
+    };
+  }, [activeStream.url, activeStream.headers, resolvedDadinho]);
 
   const client = useRemoteMediaClient();
   const videoRef = useRef<VideoRef>(null);
