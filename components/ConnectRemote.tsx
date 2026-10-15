@@ -57,6 +57,8 @@ export default function ConnectRemote() {
       | 'MENU'
       | 'CH_UP'
       | 'CH_DOWN'
+      | 'DEL'
+      | 'CLEAR'
       | '0'
       | '1'
       | '2'
@@ -68,6 +70,9 @@ export default function ConnectRemote() {
       | '8'
       | '9'
   ) => {
+    if (code === 'OK') {
+      setTypedDigits('');
+    }
     saimoConnect.sendKey(code);
   };
 
@@ -78,12 +83,12 @@ export default function ConnectRemote() {
 
   const handleBackspace = () => {
     setTypedDigits((prev) => prev.slice(0, -1));
-    handleKey('BACK');
+    saimoConnect.sendKey('DEL');
   };
 
   const handleClearDigits = () => {
     setTypedDigits('');
-    handleKey('BACK');
+    saimoConnect.sendKey('CLEAR');
   };
 
   const handleSearchChange = (text: string) => {

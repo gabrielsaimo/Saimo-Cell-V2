@@ -528,6 +528,8 @@ class SaimoConnectService {
       | 'MENU'
       | 'CH_UP'
       | 'CH_DOWN'
+      | 'DEL'
+      | 'CLEAR'
       | '0'
       | '1'
       | '2'

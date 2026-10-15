@@ -57,7 +57,7 @@ export default function MultiAudioPanel() {
   const tvLiveOffsetMs =
     activeTrackScreen?.liveOffset && activeTrackScreen.liveOffset > 0
       ? activeTrackScreen.liveOffset
-      : 10000;
+      : 12000;
   const tvOffsetSecStr = (tvLiveOffsetMs / 1000).toFixed(1);
   const totalOffsetSecStr = (Math.max(500, tvLiveOffsetMs + audioSyncDelayMs) / 1000).toFixed(1);
 
@@ -579,7 +579,7 @@ export default function MultiAudioPanel() {
                 {/* Presets de salto rápido */}
                 <Text style={styles.syncSubLabel}>Saltos Rápidos de Atraso:</Text>
                 <View style={styles.presetsRow}>
-                  {[5000, 8000, 10000, 12000, 15000].map((presetMs) => {
+                  {[2000, 5000, 8000, 10000, 12000, 15000].map((presetMs) => {
                     const isSelected = audioSyncDelayMs === presetMs;
                     return (
                       <TouchableOpacity
