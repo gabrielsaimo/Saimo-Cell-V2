@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import Video, { DRMType } from 'react-native-video';
 import { useConnectStore, TvSource } from '../stores/connectStore';
 import { configureClearKey } from '../services/clearKeyServer';
@@ -9,50 +9,146 @@ interface AudioTrackProps {
   volume: number;
 }
 
-function SingleAudioTrack({ source, volume }: AudioTrackProps) {
-  const [drmLicenseUrl, setDrmLicenseUrl] = useState<string | null>(null);
+const dadinhoCache = new Map<string, { resolved: string; timestamp: number }>();
+const DADINHO_CACHE_TTL_MS = 90 * 60 * 1000; // 90 min
 
-  useEffect(() => {
-    let ativo = true;
-    if (source.keyId && source.key) {
-      configureClearKey(`${source.keyId}:${source.key}`).then((url) => {
-        if (ativo) setDrmLicenseUrl(url);
-      });
-    } else {
-      setDrmLicenseUrl(null);
-    }
-    return () => {
-      ativo = false;
-    };
-  }, [source.keyId, source.key, source.url]);
-
-  const headers: Record<string, string> = {};
+async function resolveAudioStream(source: TvSource): Promise<{
+  uri: string;
+  headers?: Record<string, string>;
+  type?: 'm3u8' | 'mpd';
+  drm?: { type: DRMType; licenseServer: string };
+}> {
+  let uri = source.url;
+  let headers: Record<string, string> = {};
   if (source.referer) headers.Referer = source.referer;
   if (source.userAgent) headers['User-Agent'] = source.userAgent;
 
-  const drm = drmLicenseUrl
-    ? {
-        type: DRMType.CLEARKEY,
-        licenseServer: drmLicenseUrl,
+  // 1. Resolução dinâmica de Dadinho / TikTok CDN
+  if (uri.includes('dadinhodetapioca.fun/play/')) {
+    const cached = dadinhoCache.get(uri);
+    const now = Date.now();
+    if (cached && now - cached.timestamp < DADINHO_CACHE_TTL_MS) {
+      uri = cached.resolved;
+    } else {
+      try {
+        const resp = await fetch(uri, {
+          headers: {
+            Referer: 'https://rdcanais.org/',
+            'User-Agent':
+              source.userAgent ||
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        });
+        if (resp.ok) {
+          const html = await resp.text();
+          const match = html.match(/STREAM_URLS\s*=\s*\[\s*"([^"]+)"/);
+          if (match && match[1]) {
+            uri = match[1].replace(/\\\//g, '/');
+            dadinhoCache.set(source.url, { resolved: uri, timestamp: now });
+          }
+        }
+      } catch (e) {
+        console.warn('[ConnectAudio] Erro ao resolver stream dadinho:', e);
       }
-    : undefined;
+    }
+  }
+
+  // Se o stream for do dadinho ou tiktokcdn, injeta os cabeçalhos obrigatórios
+  if (uri.includes('dadinhodetapioca.fun') || uri.includes('tiktokcdn.live')) {
+    headers = {
+      ...headers,
+      Referer: 'https://dadinhodetapioca.fun/',
+      Origin: 'https://dadinhodetapioca.fun',
+    };
+  }
+
+  // 2. ClearKey DRM
+  let drm: { type: DRMType; licenseServer: string } | undefined = undefined;
+  if (source.keyId && source.key) {
+    const licenseUrl = await configureClearKey(`${source.keyId}:${source.key}`);
+    if (licenseUrl) {
+      drm = {
+        type: DRMType.CLEARKEY,
+        licenseServer: licenseUrl,
+      };
+    }
+  }
+
+  // 3. Determina o tipo do fluxo para ExoPlayer
+  const isHls =
+    uri.split('?')[0].toLowerCase().endsWith('.m3u8') ||
+    uri.split('?')[0].toLowerCase().endsWith('.txt') ||
+    uri.includes('dadinhodetapioca.fun') ||
+    uri.includes('tiktokcdn.live');
+
+  const isDash =
+    uri.split('?')[0].toLowerCase().endsWith('.mpd') ||
+    Boolean(source.keyId && source.key);
+
+  const type = isHls ? 'm3u8' : isDash ? 'mpd' : undefined;
+
+  return {
+    uri,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    type,
+    drm,
+  };
+}
+
+function SingleAudioTrack({ source, volume }: AudioTrackProps) {
+  const [streamData, setStreamData] = useState<{
+    uri: string;
+    headers?: Record<string, string>;
+    type?: 'm3u8' | 'mpd';
+    drm?: { type: DRMType; licenseServer: string };
+  } | null>(null);
+
+  const [keyCounter, setKeyCounter] = useState(0);
+
+  useEffect(() => {
+    let ativo = true;
+
+    resolveAudioStream(source)
+      .then((data) => {
+        if (ativo) {
+          setStreamData(data);
+        }
+      })
+      .catch((err) => {
+        console.warn('[ConnectAudio] Falha ao resolver áudio:', err);
+      });
+
+    return () => {
+      ativo = false;
+    };
+  }, [source.url, source.keyId, source.key, source.referer, source.userAgent, keyCounter]);
+
+  if (!streamData) return null;
 
   return (
     <Video
+      key={`audio-video-${streamData.uri}-${keyCounter}`}
       source={{
-        uri: source.url,
-        headers: Object.keys(headers).length > 0 ? headers : undefined,
+        uri: streamData.uri,
+        type: streamData.type,
+        headers: streamData.headers,
       }}
-      drm={drm}
+      drm={streamData.drm}
       paused={false}
       volume={volume}
       muted={volume <= 0}
       playInBackground={true}
       playWhenInactive={true}
       ignoreSilentSwitch="ignore"
+      disableFocus={true}
+      preventsDisplaySleepDuringVideoPlayback={false}
       style={styles.hiddenVideo}
       onError={(err) => {
         console.warn('[ConnectAudio] Erro ao tocar áudio no celular:', err);
+        // Tenta reconectar após 2.5s se a playlist expirar
+        setTimeout(() => {
+          setKeyCounter((k) => k + 1);
+        }, 2500);
       }}
     />
   );
@@ -83,10 +179,18 @@ export default function ConnectAudioHost() {
   return (
     <View pointerEvents="none" style={styles.container}>
       {playScreen0 && s0 && (
-        <SingleAudioTrack key={`audio-0-${sc0?.channel || 'c0'}-${sc0?.sourceIndex || 0}-${s0.url}`} source={s0} volume={1.0} />
+        <SingleAudioTrack
+          key={`audio-0-${sc0?.channel || 'c0'}-${sc0?.sourceIndex || 0}-${s0.url}`}
+          source={s0}
+          volume={1.0}
+        />
       )}
       {playScreen1 && s1 && (
-        <SingleAudioTrack key={`audio-1-${sc1?.channel || 'c1'}-${sc1?.sourceIndex || 0}-${s1.url}`} source={s1} volume={1.0} />
+        <SingleAudioTrack
+          key={`audio-1-${sc1?.channel || 'c1'}-${sc1?.sourceIndex || 0}-${s1.url}`}
+          source={s1}
+          volume={1.0}
+        />
       )}
     </View>
   );
@@ -94,14 +198,16 @@ export default function ConnectAudioHost() {
 
 const styles = StyleSheet.create({
   container: {
-    width: 0,
-    height: 0,
     position: 'absolute',
+    top: -100,
+    left: -100,
+    width: 2,
+    height: 2,
+    opacity: 0.01,
+    overflow: 'hidden',
   },
   hiddenVideo: {
-    width: 0,
-    height: 0,
-    position: 'absolute',
-    opacity: 0,
+    width: 2,
+    height: 2,
   },
 });
