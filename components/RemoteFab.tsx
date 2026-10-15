@@ -130,7 +130,16 @@ export default function RemoteFab() {
 
   const borderColor = isConnected
     ? 'rgba(16, 185, 129, 0.5)'
+    : isPending
+    ? 'rgba(245, 158, 11, 0.5)'
     : 'rgba(99, 102, 241, 0.4)';
+
+  const iconName = isConnected ? 'settings-remote' : 'cast';
+  const iconColor = isConnected
+    ? '#fff'
+    : isPending
+    ? '#F59E0B'
+    : Colors.primaryLight;
 
   return (
     <Animated.View
@@ -148,9 +157,9 @@ export default function RemoteFab() {
     >
       <View style={[styles.fabCircle, { borderColor }]}>
         <MaterialIcons
-          name="settings-remote"
-          size={26}
-          color={isConnected ? '#fff' : Colors.textSecondary}
+          name={iconName}
+          size={isConnected ? 26 : 24}
+          color={iconColor}
         />
         {/* LED indicador de status da conexão */}
         <View style={[styles.statusLed, { backgroundColor: badgeColor }]} />

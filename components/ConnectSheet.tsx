@@ -210,11 +210,22 @@ export default function ConnectSheet() {
 
             {discoveredTvs.length === 0 ? (
               <View style={styles.emptyCard}>
-                <MaterialIcons name="tv-off" size={36} color={Colors.textMuted} />
+                <MaterialIcons name="tv-off" size={38} color={Colors.textMuted} />
                 <Text style={styles.emptyTitle}>Nenhuma Saimo TV encontrada</Text>
                 <Text style={styles.emptyDesc}>
-                  Certifique-se de que a TV Box está ligada e conectada na mesma rede Wi-Fi.
+                  Certifique-se de que a TV Box está ligada e conectada na mesma rede Wi-Fi deste celular.
                 </Text>
+
+                {/* LEMBRETE: TV BOX PRECISA ESTAR NA VERSÃO MÍNIMA 2.2.1 */}
+                <View style={styles.versionNoticeBox}>
+                  <Ionicons name="information-circle" size={18} color="#F59E0B" />
+                  <View style={styles.versionNoticeTexts}>
+                    <Text style={styles.versionNoticeTitle}>Requisito do Saimo Connect</Text>
+                    <Text style={styles.versionNoticeDesc}>
+                      A sua TV Box precisa estar atualizada no mínimo na versão <Text style={styles.versionHighlight}>2.2.1</Text> para aceitar a conexão do celular.
+                    </Text>
+                  </View>
+                </View>
               </View>
             ) : (
               discoveredTvs.map((tv) => {
@@ -532,6 +543,36 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.xs,
     lineHeight: 18,
+  },
+  versionNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    width: '100%',
+  },
+  versionNoticeTexts: {
+    flex: 1,
+  },
+  versionNoticeTitle: {
+    color: '#F59E0B',
+    fontSize: Typography.caption.fontSize,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  versionNoticeDesc: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  versionHighlight: {
+    color: '#fff',
+    fontWeight: '800',
   },
   tvRow: {
     flexDirection: 'row',
