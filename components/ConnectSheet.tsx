@@ -24,6 +24,7 @@ export default function ConnectSheet() {
   const tvState = useConnectStore((s) => s.tvState);
   const setRemoteVisible = useConnectStore((s) => s.setRemoteVisible);
   const setMultiAudioVisible = useConnectStore((s) => s.setMultiAudioVisible);
+  const phoneAudioMode = useConnectStore((s) => s.phoneAudioMode);
 
   const [showManual, setShowManual] = useState(false);
   const [manualIp, setManualIp] = useState('');
@@ -141,18 +142,37 @@ export default function ConnectSheet() {
                     <Text style={styles.actionBtnPrimaryText}>Controle Remoto</Text>
                   </TouchableOpacity>
 
-                  {tvState?.multi && (
-                    <TouchableOpacity
-                      style={styles.actionBtnSecondary}
-                      onPress={() => {
-                        setVisible(false);
-                        setMultiAudioVisible(true);
-                      }}
+                  <TouchableOpacity
+                    style={[
+                      styles.actionBtnSecondary,
+                      phoneAudioMode !== 'none' && {
+                        borderColor: Colors.secondaryLight,
+                        backgroundColor: 'rgba(139, 92, 246, 0.18)',
+                      },
+                    ]}
+                    onPress={() => {
+                      setVisible(false);
+                      setMultiAudioVisible(true);
+                    }}
+                  >
+                    <Ionicons
+                      name="headset"
+                      size={18}
+                      color={phoneAudioMode !== 'none' ? Colors.secondaryLight : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.actionBtnSecondaryText,
+                        phoneAudioMode !== 'none' && { color: Colors.secondaryLight, fontWeight: '700' },
+                      ]}
                     >
-                      <Ionicons name="headset" size={18} color={Colors.secondaryLight} />
-                      <Text style={styles.actionBtnSecondaryText}>Áudio Multi-Tela</Text>
-                    </TouchableOpacity>
-                  )}
+                      {tvState?.multi
+                        ? 'Áudio Multi-Tela'
+                        : phoneAudioMode !== 'none'
+                        ? 'Ouvindo no Celular (Áudio)'
+                        : 'Ouvir Som no Celular'}
+                    </Text>
+                  </TouchableOpacity>
 
                   <TouchableOpacity
                     style={styles.disconnectBtn}

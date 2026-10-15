@@ -21,6 +21,7 @@ export default function ConnectRemote() {
   const setVisible = useConnectStore((s) => s.setRemoteVisible);
   const connectedTv = useConnectStore((s) => s.connectedTv);
   const tvState = useConnectStore((s) => s.tvState);
+  const phoneAudioMode = useConnectStore((s) => s.phoneAudioMode);
   const setMultiAudioVisible = useConnectStore((s) => s.setMultiAudioVisible);
   const textRequest = useConnectStore((s) => s.textRequest);
 
@@ -268,18 +269,32 @@ export default function ConnectRemote() {
                         </Text>
                       </TouchableOpacity>
 
-                      {isMulti && (
-                        <TouchableOpacity
-                          style={[styles.npMiniPill, styles.npMiniPillAudio]}
-                          onPress={() => {
-                            setVisible(false);
-                            setMultiAudioVisible(true);
-                          }}
+                      <TouchableOpacity
+                        style={[
+                          styles.npMiniPill,
+                          phoneAudioMode !== 'none' ? styles.npMiniPillAudioActive : styles.npMiniPillAudio,
+                        ]}
+                        onPress={() => {
+                          setVisible(false);
+                          setMultiAudioVisible(true);
+                        }}
+                      >
+                        <Ionicons
+                          name="headset"
+                          size={13}
+                          color={phoneAudioMode !== 'none' ? '#fff' : Colors.primaryLight}
+                        />
+                        <Text
+                          style={[
+                            styles.npMiniPillText,
+                            phoneAudioMode !== 'none'
+                              ? { color: '#fff', fontWeight: '700' }
+                              : { color: Colors.primaryLight },
+                          ]}
                         >
-                          <Ionicons name="headset" size={13} color="#fff" />
-                          <Text style={[styles.npMiniPillText, { color: '#fff' }]}>Áudio</Text>
-                        </TouchableOpacity>
-                      )}
+                          {phoneAudioMode !== 'none' ? 'Ouvindo' : 'Áudio'}
+                        </Text>
+                      </TouchableOpacity>
 
                       <TouchableOpacity
                         style={styles.npMiniPill}
@@ -320,6 +335,25 @@ export default function ConnectRemote() {
                       </TouchableOpacity>
                       <TouchableOpacity style={styles.vodMiniBtn} onPress={() => saimoConnect.seek(10000)}>
                         <MaterialIcons name="forward-10" size={20} color={Colors.text} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.vodMiniBtn,
+                          phoneAudioMode !== 'none' && {
+                            backgroundColor: Colors.secondary,
+                            borderColor: Colors.secondaryLight,
+                          },
+                        ]}
+                        onPress={() => {
+                          setVisible(false);
+                          setMultiAudioVisible(true);
+                        }}
+                      >
+                        <Ionicons
+                          name="headset"
+                          size={18}
+                          color={phoneAudioMode !== 'none' ? '#fff' : Colors.text}
+                        />
                       </TouchableOpacity>
                     </View>
                   </View>
@@ -701,7 +735,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   npMiniPillAudio: {
-    backgroundColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.35)',
+  },
+  npMiniPillAudioActive: {
+    backgroundColor: Colors.secondary,
+    borderWidth: 1,
+    borderColor: Colors.secondaryLight,
   },
   npMiniPillText: {
     color: Colors.textSecondary,

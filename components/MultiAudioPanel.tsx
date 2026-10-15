@@ -24,10 +24,12 @@ export default function MultiAudioPanel() {
 
   if (!visible) return null;
 
+  const isMulti = Boolean(tvState?.multi);
   const screen0 = tvState?.screens?.find((s) => s.idx === 0);
   const screen1 = tvState?.screens?.find((s) => s.idx === 1);
   const tvAudio = tvState?.tvAudio || (tvState?.active === 1 ? '1' : '0');
   const activeScreen = tvState?.active ?? 0;
+  const isVod = tvState?.mode === 'vod';
 
   const handleTvAudio = (src: '0' | '1' | 'mute') => {
     saimoConnect.setTvAudio(src);
@@ -61,18 +63,30 @@ export default function MultiAudioPanel() {
 
   // Mensagem descritiva do cenário atual
   let cenarioDica = '';
-  if (tvAudio === '0' && phoneAudioMode === '1') {
-    cenarioDica = '✨ Modo Duas Pessoas: A TV toca o Canal 1 na sala enquanto você ouve o Canal 2 no celular/fone!';
-  } else if (tvAudio === '1' && phoneAudioMode === '0') {
-    cenarioDica = '✨ Modo Duas Pessoas: A TV toca o Canal 2 na sala enquanto você ouve o Canal 1 no celular/fone!';
-  } else if (tvAudio === 'mute' && (phoneAudioMode === '0' || phoneAudioMode === '1')) {
-    cenarioDica = `🔇 Modo Silencioso: A TV está muda na sala e você ouve o Canal ${phoneAudioMode === '0' ? '1' : '2'} no fone.`;
-  } else if (phoneAudioMode === 'both') {
-    cenarioDica = '🎧 Ambos os canais estão mixados no seu celular.';
-  } else if (phoneAudioMode === 'none') {
-    cenarioDica = '📱 Som do celular desligado. Apenas a TV está emitindo som.';
-  } else if (tvAudio === phoneAudioMode) {
-    cenarioDica = `📢 TV e Celular estão ambos sintonizados no áudio do Canal ${tvAudio === '0' ? '1' : '2'}.`;
+  if (isMulti) {
+    if (tvAudio === '0' && phoneAudioMode === '1') {
+      cenarioDica = '✨ Modo Duas Pessoas: A TV toca o Canal 1 na sala enquanto você ouve o Canal 2 no celular/fone!';
+    } else if (tvAudio === '1' && phoneAudioMode === '0') {
+      cenarioDica = '✨ Modo Duas Pessoas: A TV toca o Canal 2 na sala enquanto você ouve o Canal 1 no celular/fone!';
+    } else if (tvAudio === 'mute' && (phoneAudioMode === '0' || phoneAudioMode === '1')) {
+      cenarioDica = `🔇 Modo Silencioso: A TV está muda na sala e você ouve o Canal ${phoneAudioMode === '0' ? '1' : '2'} no fone.`;
+    } else if (phoneAudioMode === 'both') {
+      cenarioDica = '🎧 Ambos os canais estão mixados no seu celular.';
+    } else if (phoneAudioMode === 'none') {
+      cenarioDica = '📱 Som do celular desligado. Apenas a TV está emitindo som.';
+    } else if (tvAudio === phoneAudioMode) {
+      cenarioDica = `📢 TV e Celular estão ambos sintonizados no áudio do Canal ${tvAudio === '0' ? '1' : '2'}.`;
+    }
+  } else {
+    if (phoneAudioMode !== 'none') {
+      if (tvAudio === 'mute') {
+        cenarioDica = '🔇 Modo Silencioso Ativo: A TV está muda na sala e você está ouvindo com exclusividade no celular/fone!';
+      } else {
+        cenarioDica = '📢 TV e celular estão tocando ao mesmo tempo. Ajuste a sincronia abaixo se houver delay.';
+      }
+    } else {
+      cenarioDica = '📱 Som do celular desligado. A TV está reproduzindo normalmente nos alto-falantes.';
+    }
   }
 
   return (
@@ -80,18 +94,24 @@ export default function MultiAudioPanel() {
       transparent
       visible={visible}
       animationType="slide"
+      statusBarTranslucent
       onRequestClose={() => setVisible(false)}
     >
-      <Pressable style={styles.backdrop} onPress={() => setVisible(false)}>
-        <Pressable style={styles.container} onPress={() => {}}>
+      <View style={styles.backdrop}>
+        <Pressable style={styles.dismissOverlay} onPress={() => setVisible(false)} />
+        <View style={styles.container}>
           <View style={styles.handle} />
 
-          {/* Cabeçalho */}
+          {/* Cabeçalho fixo no topo */}
           <View style={styles.header}>
             <View style={styles.headerTitles}>
-              <Text style={styles.title}>Áudio Multi-Tela</Text>
+              <Text style={styles.title}>
+                {isMulti ? 'Áudio Multi-Tela' : 'Áudio no Celular & TV'}
+              </Text>
               <Text style={styles.subtitle}>
-                Controle o som da TV e do seu celular separadamente
+                {isMulti
+                  ? 'Controle o som da TV e do seu celular separadamente'
+                  : 'Ouça a TV no fone de ouvido ou alto-falante do celular'}
               </Text>
             </View>
             <TouchableOpacity
@@ -99,29 +119,116 @@ export default function MultiAudioPanel() {
               onPress={() => setVisible(false)}
               hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              <Ionicons name="close" size={24} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.scroll} bounces={false} showsVerticalScrollIndicator={false}>
-            {/* Visualização dos 2 canais lado a lado */}
-            <View style={styles.screensRow}>
-              {/* Canal 1 */}
-              <TouchableOpacity
-                style={[
-                  styles.screenCard,
-                  activeScreen === 0 && styles.screenCardActive,
-                ]}
-                onPress={() => handleFocusScreen(0)}
-                activeOpacity={0.8}
-              >
-                <View style={styles.screenCardHeader}>
-                  <View style={[styles.badge, styles.badge1]}>
-                    <Text style={styles.badgeText}>CANAL 1</Text>
+          {/* Conteúdo com Scroll vertical suave e livre */}
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+            bounces={true}
+            showsVerticalScrollIndicator={true}
+            indicatorStyle="white"
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={true}
+          >
+            {/* Visualização dos canais */}
+            {isMulti ? (
+              <View style={styles.screensRow}>
+                {/* Canal 1 */}
+                <TouchableOpacity
+                  style={[
+                    styles.screenCard,
+                    activeScreen === 0 && styles.screenCardActive,
+                  ]}
+                  onPress={() => handleFocusScreen(0)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.screenCardHeader}>
+                    <View style={[styles.badge, styles.badge1]}>
+                      <Text style={styles.badgeText}>CANAL 1</Text>
+                    </View>
+                    {activeScreen === 0 && (
+                      <View style={styles.focusBadge}>
+                        <Text style={styles.focusBadgeText}>Foco TV</Text>
+                      </View>
+                    )}
                   </View>
-                  {activeScreen === 0 && (
-                    <View style={styles.focusBadge}>
-                      <Text style={styles.focusBadgeText}>Foco TV</Text>
+
+                  <View style={styles.channelInfo}>
+                    {screen0?.logo ? (
+                      <Image source={{ uri: screen0.logo }} style={styles.channelLogo} resizeMode="contain" />
+                    ) : (
+                      <View style={styles.channelLogoFallback}>
+                        <MaterialIcons name="tv" size={20} color={Colors.textSecondary} />
+                      </View>
+                    )}
+                    <View style={styles.channelText}>
+                      <Text style={styles.channelName} numberOfLines={1}>
+                        {screen0?.channel || 'Canal 1'}
+                      </Text>
+                      <Text style={styles.programTitle} numberOfLines={1}>
+                        {screen0?.program || 'Transmissão ao vivo'}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Canal 2 */}
+                <TouchableOpacity
+                  style={[
+                    styles.screenCard,
+                    activeScreen === 1 && styles.screenCardActive,
+                  ]}
+                  onPress={() => handleFocusScreen(1)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.screenCardHeader}>
+                    <View style={[styles.badge, styles.badge2]}>
+                      <Text style={styles.badgeText}>CANAL 2</Text>
+                    </View>
+                    {activeScreen === 1 && (
+                      <View style={styles.focusBadge}>
+                        <Text style={styles.focusBadgeText}>Foco TV</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.channelInfo}>
+                    {screen1?.logo ? (
+                      <Image source={{ uri: screen1.logo }} style={styles.channelLogo} resizeMode="contain" />
+                    ) : (
+                      <View style={styles.channelLogoFallback}>
+                        <MaterialIcons name="tv" size={20} color={Colors.textSecondary} />
+                      </View>
+                    )}
+                    <View style={styles.channelText}>
+                      <Text style={styles.channelName} numberOfLines={1}>
+                        {screen1?.channel || 'Canal 2'}
+                      </Text>
+                      <Text style={styles.programTitle} numberOfLines={1}>
+                        {screen1?.program || 'Transmissão ao vivo'}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.singleScreenCard}>
+                <View style={styles.singleScreenHeader}>
+                  <View
+                    style={[
+                      styles.badge,
+                      { backgroundColor: isVod ? Colors.secondary : '#3B82F6' },
+                    ]}
+                  >
+                    <Text style={styles.badgeText}>{isVod ? 'FILME / SÉRIE' : 'TV AO VIVO'}</Text>
+                  </View>
+                  {phoneAudioMode !== 'none' && (
+                    <View style={styles.activePillBadge}>
+                      <Ionicons name="headset" size={11} color="#fff" />
+                      <Text style={styles.activePillBadgeText}>Áudio Ativo no Celular</Text>
                     </View>
                   )}
                 </View>
@@ -131,59 +238,20 @@ export default function MultiAudioPanel() {
                     <Image source={{ uri: screen0.logo }} style={styles.channelLogo} resizeMode="contain" />
                   ) : (
                     <View style={styles.channelLogoFallback}>
-                      <MaterialIcons name="tv" size={20} color={Colors.textSecondary} />
+                      <MaterialIcons name={isVod ? 'movie' : 'tv'} size={20} color={Colors.textSecondary} />
                     </View>
                   )}
                   <View style={styles.channelText}>
                     <Text style={styles.channelName} numberOfLines={1}>
-                      {screen0?.channel || 'Canal 1'}
+                      {screen0?.channel || (isVod ? tvState?.vod?.title || 'Filme / Série' : 'Canal de TV')}
                     </Text>
                     <Text style={styles.programTitle} numberOfLines={1}>
-                      {screen0?.program || 'Transmissão ao vivo'}
+                      {screen0?.program || (isVod ? tvState?.vod?.subtitle || 'Reproduzindo na TV' : 'Transmissão')}
                     </Text>
                   </View>
                 </View>
-              </TouchableOpacity>
-
-              {/* Canal 2 */}
-              <TouchableOpacity
-                style={[
-                  styles.screenCard,
-                  activeScreen === 1 && styles.screenCardActive,
-                ]}
-                onPress={() => handleFocusScreen(1)}
-                activeOpacity={0.8}
-              >
-                <View style={styles.screenCardHeader}>
-                  <View style={[styles.badge, styles.badge2]}>
-                    <Text style={styles.badgeText}>CANAL 2</Text>
-                  </View>
-                  {activeScreen === 1 && (
-                    <View style={styles.focusBadge}>
-                      <Text style={styles.focusBadgeText}>Foco TV</Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.channelInfo}>
-                  {screen1?.logo ? (
-                    <Image source={{ uri: screen1.logo }} style={styles.channelLogo} resizeMode="contain" />
-                  ) : (
-                    <View style={styles.channelLogoFallback}>
-                      <MaterialIcons name="tv" size={20} color={Colors.textSecondary} />
-                    </View>
-                  )}
-                  <View style={styles.channelText}>
-                    <Text style={styles.channelName} numberOfLines={1}>
-                      {screen1?.channel || 'Canal 2'}
-                    </Text>
-                    <Text style={styles.programTitle} numberOfLines={1}>
-                      {screen1?.program || 'Transmissão ao vivo'}
-                    </Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
-            </View>
+              </View>
+            )}
 
             {/* Balão de Dica / Cenário inteligente */}
             {cenarioDica ? (
@@ -199,61 +267,86 @@ export default function MultiAudioPanel() {
                 <Text style={styles.sectionTitle}>Som dos Alto-falantes da TV</Text>
               </View>
               <Text style={styles.sectionDesc}>
-                Escolha o canal que vai sair pelo som da sua TV na sala:
+                {isMulti
+                  ? 'Escolha o canal que vai sair pelo som da sua TV na sala:'
+                  : 'Deixe a TV com som ou ative o mudo para ouvir com privacidade no fone:'}
               </Text>
 
-              <View style={styles.buttonGroup}>
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    tvAudio === '0' && styles.choiceBtnActive,
-                  ]}
-                  onPress={() => handleTvAudio('0')}
-                >
-                  <MaterialIcons
-                    name="volume-up"
-                    size={20}
-                    color={tvAudio === '0' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, tvAudio === '0' && styles.choiceBtnTextActive]}>
-                    Canal 1
-                  </Text>
-                </TouchableOpacity>
+              {isMulti ? (
+                <View style={styles.buttonGroup}>
+                  <TouchableOpacity
+                    style={[styles.choiceBtn, tvAudio === '0' && styles.choiceBtnActive]}
+                    onPress={() => handleTvAudio('0')}
+                  >
+                    <MaterialIcons
+                      name="volume-up"
+                      size={20}
+                      color={tvAudio === '0' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text style={[styles.choiceBtnText, tvAudio === '0' && styles.choiceBtnTextActive]}>
+                      Canal 1
+                    </Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    tvAudio === '1' && styles.choiceBtnActive,
-                  ]}
-                  onPress={() => handleTvAudio('1')}
-                >
-                  <MaterialIcons
-                    name="volume-up"
-                    size={20}
-                    color={tvAudio === '1' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, tvAudio === '1' && styles.choiceBtnTextActive]}>
-                    Canal 2
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.choiceBtn, tvAudio === '1' && styles.choiceBtnActive]}
+                    onPress={() => handleTvAudio('1')}
+                  >
+                    <MaterialIcons
+                      name="volume-up"
+                      size={20}
+                      color={tvAudio === '1' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text style={[styles.choiceBtnText, tvAudio === '1' && styles.choiceBtnTextActive]}>
+                      Canal 2
+                    </Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    tvAudio === 'mute' && styles.choiceBtnMuteActive,
-                  ]}
-                  onPress={() => handleTvAudio('mute')}
-                >
-                  <MaterialIcons
-                    name="volume-off"
-                    size={20}
-                    color={tvAudio === 'mute' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, tvAudio === 'mute' && styles.choiceBtnTextActive]}>
-                    Mudo
-                  </Text>
-                </TouchableOpacity>
-              </View>
+                  <TouchableOpacity
+                    style={[styles.choiceBtn, tvAudio === 'mute' && styles.choiceBtnMuteActive]}
+                    onPress={() => handleTvAudio('mute')}
+                  >
+                    <MaterialIcons
+                      name="volume-off"
+                      size={20}
+                      color={tvAudio === 'mute' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text style={[styles.choiceBtnText, tvAudio === 'mute' && styles.choiceBtnTextActive]}>
+                      Mudo
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.buttonGroup}>
+                  <TouchableOpacity
+                    style={[styles.choiceBtn, tvAudio !== 'mute' && styles.choiceBtnActive]}
+                    onPress={() => handleTvAudio('0')}
+                  >
+                    <MaterialIcons
+                      name="volume-up"
+                      size={20}
+                      color={tvAudio !== 'mute' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text style={[styles.choiceBtnText, tvAudio !== 'mute' && styles.choiceBtnTextActive]}>
+                      🔊 Som Ligado na TV
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.choiceBtn, tvAudio === 'mute' && styles.choiceBtnMuteActive]}
+                    onPress={() => handleTvAudio('mute')}
+                  >
+                    <MaterialIcons
+                      name="volume-off"
+                      size={20}
+                      color={tvAudio === 'mute' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text style={[styles.choiceBtnText, tvAudio === 'mute' && styles.choiceBtnTextActive]}>
+                      🔇 Mudo na TV (Silencioso)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
 
             {/* SEÇÃO 2: SOM NESTE CELULAR */}
@@ -263,78 +356,148 @@ export default function MultiAudioPanel() {
                 <Text style={styles.sectionTitle}>Som neste Celular / Fone</Text>
               </View>
               <Text style={styles.sectionDesc}>
-                Ouça individualmente pelo alto-falante ou fone Bluetooth:
+                {isMulti
+                  ? 'Ouça individualmente pelo alto-falante ou fone Bluetooth:'
+                  : 'Transmitir o áudio da TV direto para este celular/fone:'}
               </Text>
 
-              <View style={styles.buttonGroup}>
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    phoneAudioMode === 'none' && styles.choiceBtnActiveSecondary,
-                  ]}
-                  onPress={() => handlePhoneAudio('none')}
-                >
-                  <Ionicons
-                    name="volume-mute-outline"
-                    size={18}
-                    color={phoneAudioMode === 'none' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, phoneAudioMode === 'none' && styles.choiceBtnTextActive]}>
-                    Nenhum
-                  </Text>
-                </TouchableOpacity>
+              {isMulti ? (
+                <View style={styles.buttonGroup}>
+                  <TouchableOpacity
+                    style={[
+                      styles.choiceBtn,
+                      phoneAudioMode === 'none' && styles.choiceBtnActiveSecondary,
+                    ]}
+                    onPress={() => handlePhoneAudio('none')}
+                  >
+                    <Ionicons
+                      name="volume-mute-outline"
+                      size={18}
+                      color={phoneAudioMode === 'none' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.choiceBtnText,
+                        phoneAudioMode === 'none' && styles.choiceBtnTextActive,
+                      ]}
+                    >
+                      Nenhum
+                    </Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    phoneAudioMode === '0' && styles.choiceBtnActiveSecondary,
-                  ]}
-                  onPress={() => handlePhoneAudio('0')}
-                >
-                  <Ionicons
-                    name="headset"
-                    size={18}
-                    color={phoneAudioMode === '0' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, phoneAudioMode === '0' && styles.choiceBtnTextActive]}>
-                    Canal 1
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.choiceBtn,
+                      phoneAudioMode === '0' && styles.choiceBtnActiveSecondary,
+                    ]}
+                    onPress={() => handlePhoneAudio('0')}
+                  >
+                    <Ionicons
+                      name="headset"
+                      size={18}
+                      color={phoneAudioMode === '0' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.choiceBtnText,
+                        phoneAudioMode === '0' && styles.choiceBtnTextActive,
+                      ]}
+                    >
+                      Canal 1
+                    </Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    phoneAudioMode === '1' && styles.choiceBtnActiveSecondary,
-                  ]}
-                  onPress={() => handlePhoneAudio('1')}
-                >
-                  <Ionicons
-                    name="headset"
-                    size={18}
-                    color={phoneAudioMode === '1' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, phoneAudioMode === '1' && styles.choiceBtnTextActive]}>
-                    Canal 2
-                  </Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.choiceBtn,
+                      phoneAudioMode === '1' && styles.choiceBtnActiveSecondary,
+                    ]}
+                    onPress={() => handlePhoneAudio('1')}
+                  >
+                    <Ionicons
+                      name="headset"
+                      size={18}
+                      color={phoneAudioMode === '1' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.choiceBtnText,
+                        phoneAudioMode === '1' && styles.choiceBtnTextActive,
+                      ]}
+                    >
+                      Canal 2
+                    </Text>
+                  </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={[
-                    styles.choiceBtn,
-                    phoneAudioMode === 'both' && styles.choiceBtnActiveSecondary,
-                  ]}
-                  onPress={() => handlePhoneAudio('both')}
-                >
-                  <Ionicons
-                    name="options"
-                    size={18}
-                    color={phoneAudioMode === 'both' ? '#fff' : Colors.textSecondary}
-                  />
-                  <Text style={[styles.choiceBtnText, phoneAudioMode === 'both' && styles.choiceBtnTextActive]}>
-                    Ambos
-                  </Text>
-                </TouchableOpacity>
-              </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.choiceBtn,
+                      phoneAudioMode === 'both' && styles.choiceBtnActiveSecondary,
+                    ]}
+                    onPress={() => handlePhoneAudio('both')}
+                  >
+                    <Ionicons
+                      name="options"
+                      size={18}
+                      color={phoneAudioMode === 'both' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.choiceBtnText,
+                        phoneAudioMode === 'both' && styles.choiceBtnTextActive,
+                      ]}
+                    >
+                      Ambos
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.buttonGroup}>
+                  <TouchableOpacity
+                    style={[
+                      styles.choiceBtn,
+                      phoneAudioMode === 'none' && styles.choiceBtnActiveSecondary,
+                    ]}
+                    onPress={() => handlePhoneAudio('none')}
+                  >
+                    <Ionicons
+                      name="volume-mute-outline"
+                      size={18}
+                      color={phoneAudioMode === 'none' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.choiceBtnText,
+                        phoneAudioMode === 'none' && styles.choiceBtnTextActive,
+                      ]}
+                    >
+                      Desligado
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.choiceBtn,
+                      phoneAudioMode !== 'none' && styles.choiceBtnActiveSecondary,
+                    ]}
+                    onPress={() => handlePhoneAudio('0')}
+                  >
+                    <Ionicons
+                      name="headset"
+                      size={18}
+                      color={phoneAudioMode !== 'none' ? '#fff' : Colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.choiceBtnText,
+                        phoneAudioMode !== 'none' && styles.choiceBtnTextActive,
+                      ]}
+                    >
+                      🎧 Ouvir no Celular
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
 
             {/* SINCRONIA DO ÁUDIO COM A TV & FONE */}
@@ -365,7 +528,7 @@ export default function MultiAudioPanel() {
                 </View>
 
                 <Text style={styles.syncDesc}>
-                  O áudio é alinhado com a transmissão da TV. Se a voz no celular ainda estiver à frente da imagem, aumente o atraso (+). Se estiver atrasada, diminua (-).
+                  O áudio é sincronizado com a TV. Se a voz no celular ainda estiver à frente da imagem, aumente o atraso (+). Se estiver atrasada, diminua (-).
                 </Text>
 
                 {/* Botão de Sincronia Automática com a TV */}
@@ -436,20 +599,32 @@ export default function MultiAudioPanel() {
 
             {/* Ações inferiores */}
             <View style={styles.bottomActions}>
-              <TouchableOpacity
-                style={styles.exitMultiBtn}
-                onPress={() => {
-                  saimoConnect.toggleMultiTela(false);
-                  setVisible(false);
-                }}
-              >
-                <MaterialIcons name="fullscreen" size={20} color={Colors.error} />
-                <Text style={styles.exitMultiBtnText}>Sair da Multi-Tela na TV</Text>
-              </TouchableOpacity>
+              {isMulti ? (
+                <TouchableOpacity
+                  style={styles.exitMultiBtn}
+                  onPress={() => {
+                    saimoConnect.toggleMultiTela(false);
+                    setVisible(false);
+                  }}
+                >
+                  <MaterialIcons name="fullscreen" size={20} color={Colors.error} />
+                  <Text style={styles.exitMultiBtnText}>Sair da Multi-Tela na TV</Text>
+                </TouchableOpacity>
+              ) : !isVod ? (
+                <TouchableOpacity
+                  style={styles.enterMultiBtn}
+                  onPress={() => {
+                    saimoConnect.toggleMultiTela(true);
+                  }}
+                >
+                  <MaterialIcons name="picture-in-picture" size={20} color={Colors.primaryLight} />
+                  <Text style={styles.enterMultiBtnText}>Dividir Tela (Ativar Multi-Tela)</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -460,14 +635,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'flex-end',
   },
+  dismissOverlay: {
+    flex: 1,
+  },
   container: {
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: Spacing.lg,
     paddingTop: Spacing.md,
-    paddingBottom: Spacing.xxxl,
-    maxHeight: '85%',
+    paddingBottom: 0,
+    maxHeight: '90%',
+    display: 'flex',
+    flexDirection: 'column',
   },
   handle: {
     width: 40,
@@ -501,6 +681,10 @@ const styles = StyleSheet.create({
   },
   scroll: {
     flexGrow: 0,
+    flexShrink: 1,
+  },
+  scrollContent: {
+    paddingBottom: 48,
   },
   screensRow: {
     flexDirection: 'row',
@@ -524,6 +708,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: Spacing.xs,
+  },
+  singleScreenCard: {
+    backgroundColor: Colors.surfaceVariant,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    marginBottom: Spacing.md,
+  },
+  singleScreenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  activePillBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.secondary,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.xs,
+  },
+  activePillBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   badge: {
     paddingHorizontal: 6,
@@ -649,6 +861,7 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: Typography.caption.fontSize,
     fontWeight: '600',
+    textAlign: 'center',
   },
   choiceBtnTextActive: {
     color: '#FFFFFF',
@@ -819,6 +1032,22 @@ const styles = StyleSheet.create({
   },
   exitMultiBtnText: {
     color: Colors.errorLight,
+    fontSize: Typography.body.fontSize,
+    fontWeight: '600',
+  },
+  enterMultiBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceVariant,
+  },
+  enterMultiBtnText: {
+    color: Colors.text,
     fontSize: Typography.body.fontSize,
     fontWeight: '600',
   },
