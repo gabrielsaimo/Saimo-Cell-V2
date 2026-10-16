@@ -464,61 +464,316 @@ async function extractProgrammes(file: FSFile, targetIds: Set<string>, pluto = f
 // seguro mesmo sem esses dois mapas saberem da existência um do outro.
 
 const GUIADETV_SLUGS: Record<string, string> = {
-    'sony movies': 'sony-movies',
-    'sbt news': 'sbt-news',
-    'terra viva': 'terra-viva',
+    'a e': 'ae',
+    ae: 'ae',
+    agro: 'agro',
+    'agro mais': 'agro',
+    'canal agro': 'agro',
+    amc: 'amc',
+    'animal planet': 'animal-planet',
+    'arte 1': 'arte-1',
+    arte1: 'arte-1',
+    axn: 'axn',
+    band: 'band',
+    'band sp': 'band',
+    'band campinas': 'band',
+    'band curitiba': 'band',
+    'band mg': 'band',
+    'band para': 'band',
+    'band recife tv tribuna': 'band',
+    'band rn': 'band',
+    'band rs': 'band',
+    'band sergipe': 'band',
+    'band rj': 'band-rj',
+    'band news': 'bandnews',
+    bandnews: 'bandnews',
+    'band sports': 'bandsports',
+    bandsports: 'bandsports',
+    'bbc world': 'bbc-world',
+    'bbc world news': 'bbc-world',
+    bis: 'bis',
+    bloomberg: 'bloomberg',
+    'box kids': 'box-kids',
     'box kids tv': 'box-kids',
-    'x sports': 'xsports',
+    'canal educacao': 'canal-educacao',
+    'canal rural': 'canal-rural',
+    'canal uol': 'canal-uol',
+    'cancao nova': 'cancao-nova',
+    'cartoon network': 'cartoon-network',
+    cartoonito: 'cartoonito',
+    cinemax: 'cinemax',
+    'cnn brasil': 'cnn-brasil',
+    combate: 'combate',
+    curta: 'curta',
+    'discovery channel': 'discovery-channel',
+    'discovery home health': 'discovery-home-health',
+    'discovery h h': 'discovery-home-health',
+    'discovery kids': 'discovery-kids',
+    'discovery science': 'discovery-science',
+    'discovery theater': 'discovery-theater',
+    'discovery turbo': 'discovery-turbo',
+    'discovery world': 'discovery-world',
+    'discovery id': 'investigacao-discovery',
+    'investigacao discovery': 'investigacao-discovery',
+    'investigation discovery': 'investigacao-discovery',
+    e: 'e',
+    espn: 'espn',
+    'espn 2': 'espn-2',
+    'espn 3': 'espn-3',
+    'espn 4': 'espn-4',
+    'espn 5': 'espn-5',
+    'espn 6': 'espn-6',
+    'film arts': 'film-arts',
+    'food network': 'food-network',
+    'fox news': 'fox-news',
+    futura: 'futura',
+    'canal futura': 'futura',
+    'ge tv': 'ge-tv',
+    getv: 'ge-tv',
+    'globo news': 'globo-news',
+    globonews: 'globo-news',
+    'globo rj': 'globo-rio-de-janeiro',
+    'globo rio de janeiro': 'globo-rio-de-janeiro',
+    globo: 'globo-sp',
+    'globo sp': 'globo-sp',
+    'globo am': 'globo-sp',
+    'globo ce': 'globo-sp',
+    'globo df': 'globo-sp',
+    'globo es': 'globo-sp',
+    'globo go': 'globo-sp',
+    'globo mg': 'globo-sp',
+    'globo pb': 'globo-sp',
+    'globo pe': 'globo-sp',
+    'globo rs': 'globo-sp',
+    gloob: 'gloob',
+    gloobinho: 'gloobinho',
+    gnt: 'gnt',
+    hbo: 'hbo',
+    'hbo 2': 'hbo-2',
+    hbo2: 'hbo-2',
+    'hbo family': 'hbo-family',
+    'hbo mundi': 'hbo-mundi',
+    'hbo plus': 'hbo-plus',
+    'hbo pop': 'hbo-pop',
+    'hbo signature': 'hbo-signature',
+    'hbo xtreme': 'hbo-xtreme',
+    hgtv: 'hgtv',
+    history: 'history',
+    'history channel': 'history',
+    'history 2': 'history-2',
+    h2: 'history-2',
+    'jovem pan news': 'jovem-pan-news',
+    lifetime: 'lifetime',
+    'lifetime movies': 'lifetime',
+    megapix: 'megapix',
+    multishow: 'multishow',
+    'music box brazil': 'music-box-brazil',
     'n sports': 'nsports',
+    nsports: 'nsports',
+    'n sports jogo 1': 'nsports',
+    off: 'off',
+    'canal off': 'off',
+    premiere: 'premiere-fc',
+    'premiere clubes': 'premiere-fc',
+    'premiere fc': 'premiere-fc',
+    'premiere 2': 'premiere-2',
+    'premiere 3': 'premiere-3',
+    'premiere 4': 'premiere-4',
+    'premiere 5': 'premiere-5',
+    'premiere 6': 'premiere-6',
+    'premiere 7': 'premiere-7',
+    'prime box brazil': 'prime-box-brazil',
+    'record news': 'record-news',
+    record: 'record-tv',
+    'record tv': 'record-tv',
+    'record sp': 'record-tv',
+    'record go': 'record-tv',
+    'record mg': 'record-tv',
+    'record rj': 'record-tv',
+    'record internacional': 'record-tv',
+    recordtv: 'record-tv',
+    'rede brasil': 'rede-brasil',
+    'rede familia': 'rede-familia',
+    'rede gospel': 'rede-gospel',
+    redetv: 'rede-tv',
+    'rede tv': 'rede-tv',
+    'rede vida': 'rede-vida',
+    sbt: 'sbt',
+    'sbt sp': 'sbt',
+    'sbt alterosa': 'sbt',
+    'sbt ba': 'sbt',
+    'sbt go': 'sbt',
+    'sbt interior': 'sbt',
+    'sbt londrina': 'sbt',
+    'sbt maringa': 'sbt',
+    'sbt mg': 'sbt',
+    'sbt pi': 'sbt',
+    'sbt pr': 'sbt',
+    'sbt news': 'sbt-news',
+    'sbt rj': 'sbt-rio-de-janeiro',
+    'sbt rio de janeiro': 'sbt-rio-de-janeiro',
+    sony: 'sony',
+    'sony channel': 'sony',
+    'sony movies': 'sony-movies',
+    space: 'space',
+    sportv: 'sportv',
+    'sportv 2': 'sportv-2',
+    sportv2: 'sportv-2',
+    'sportv 3': 'sportv-3',
+    sportv3: 'sportv-3',
+    sportynet: 'sportynet',
+    'sportynet 01': 'sportynet',
+    'sportynet 4': 'sportynet',
+    'sportynet 1': 'sportynet',
+    'sportynet 2': 'sportynet',
+    'sportynet 3': 'sportynet',
+    'studio universal': 'studio-universal',
+    syfy: 'syfy',
+    'usa network': 'syfy',
+    tcm: 'tcm',
+    'telecine action': 'telecine-action',
+    'telecine cult': 'telecine-cult',
+    'telecine fun': 'telecine-fun',
+    'telecine pipoca': 'telecine-pipoca',
+    'telecine premium': 'telecine-premium',
+    'telecine touch': 'telecine-touch',
+    'terra viva': 'terra-viva',
+    tlc: 'tlc',
+    tnt: 'tnt',
+    'tnt novelas': 'tnt-novelas',
+    'tnt series': 'tnt-series',
+    tooncast: 'tooncast',
+    'travel box brazil': 'travel-box-brasil',
+    'travel box brasil': 'travel-box-brasil',
+    trutv: 'trutv',
+    'adult swim': 'trutv',
+    'tv aparecida': 'tv-aparecida',
+    'tv brasil': 'tv-brasil',
+    'tv camara': 'tv-camara',
+    'tv cultura': 'tv-cultura',
+    cultura: 'tv-cultura',
+    'tv gazeta': 'tv-gazeta',
+    gazeta: 'tv-gazeta',
+    'tv ra tim bum': 'tv-ra-tim-bum',
+    'ra tim bum': 'tv-ra-tim-bum',
+    'tv senado': 'tv-senado',
+    'universal tv': 'universal-tv',
+    'universal channel': 'universal-tv',
+    viva: 'viva',
+    'canal viva': 'viva',
+    'globoplay novelas': 'viva',
+    warner: 'warner',
+    'warner channel': 'warner',
+    woohoo: 'woohoo',
+    'x sports': 'xsports',
+    xsports: 'xsports',
 };
 
+function slugDe(name: string): string | undefined {
+    const clean = norm(name.replace(/\s*\((?:s\d+|ot|rk|b\d+|alt)\)\s*$/i, ''));
+    return GUIADETV_SLUGS[clean] ?? GUIADETV_SLUGS[norm(name)];
+}
+
 /**
- * `data-dt="AAAA-MM-DD HH:MM:SS-03:00"` seguido, adiante, de um link
- * `/programa/...` cujo texto é o título. O fim não é publicado — mesma regra
- * do resto do guia: vai até o próximo começar.
+ * `https://www.guiadetv.com/canal/<slug>`
+ * Cada programa é um `<li class="flex gap-4 ...">` contendo:
+ * - `<time datetime="AAAA-MM-DDTHH:MM:SS-03:00">HH:MM</time>`
+ * - `<span class="text-xs ...">1h30</span>`
+ * - `<a href="/programa/..." ...>Título</a>`
+ * - `<p class="mt-1 ...">Sinopse...</p>`
  */
 function parseGuiaDeTv(html: string, channelId: string): Program[] {
-    const padrao = /data-dt="(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):\d{2}[^"]*"[\s\S]*?<a[^>]*href="[^"]*programa\/[^"]+"[^>]*>[\s\S]*?([A-Za-zÀ-ÿ0-9][^<]{2,150})/g;
+    const itens = html.split('<li');
+    const lista: Array<{ start: number; duration: number; title: string; desc: string }> = [];
 
-    const vistos = new Map<number, string>();
-    for (const m of html.matchAll(padrao)) {
-        const [, ano, mes, dia, hora, minuto] = m;
-        // O guiadetv publica sempre em horário de Brasília (-03:00, sem
-        // horário de verão desde 2019). `new Date(y,m,d,h,min)` leria isso no
-        // fuso do aparelho — certo só por acaso, para quem está no Brasil.
-        const inicio = Date.UTC(Number(ano), Number(mes) - 1, Number(dia), Number(hora) + 3, Number(minuto));
-        const titulo = dec(m[6]).trim().replace(/\s+/g, ' ');
-        if (titulo.length < 2) continue;
-        // O mesmo instante pode repetir na página — o link do programa carrega
-        // metadados extras que também casam com o padrão.
-        if (!vistos.has(inicio)) vistos.set(inicio, titulo);
+    for (let i = 1; i < itens.length; i++) {
+        const item = itens[i];
+        const dtIdx = item.indexOf('datetime="');
+        if (dtIdx < 0) continue;
+        const dtEnd = item.indexOf('"', dtIdx + 10);
+        if (dtEnd < 0) continue;
+        const dt = item.slice(dtIdx + 10, dtEnd);
+
+        const start = Date.parse(dt);
+        if (isNaN(start)) continue;
+
+        const progIdx = item.indexOf('/programa/');
+        if (progIdx < 0) continue;
+        const tagClose = item.indexOf('>', progIdx);
+        if (tagClose < 0) continue;
+        const aEnd = item.indexOf('</a>', tagClose);
+        if (aEnd < 0) continue;
+        const title = dec(item.slice(tagClose + 1, aEnd)).trim().replace(/\s+/g, ' ');
+        if (!title || title.length < 2) continue;
+
+        let duration = 3_600_000;
+        const durIdx = item.indexOf('</time>');
+        if (durIdx >= 0) {
+            const spanIdx = item.indexOf('>', durIdx);
+            const spanEnd = item.indexOf('</span>', spanIdx);
+            if (spanIdx >= 0 && spanEnd > spanIdx) {
+                const durTexto = item.slice(spanIdx + 1, spanEnd).trim();
+                if (durTexto.includes('h')) {
+                    const [h, m] = durTexto.split('h');
+                    duration = ((Number(h) || 0) * 60 + (Number(m) || 0)) * 60_000;
+                } else if (durTexto.endsWith('min')) {
+                    const m = Number(durTexto.slice(0, -3).trim()) || 0;
+                    if (m > 0) duration = m * 60_000;
+                }
+            }
+        }
+
+        let desc = '';
+        const pIdx = item.indexOf('<p');
+        if (pIdx >= 0) {
+            const pClose = item.indexOf('>', pIdx);
+            const pEnd = item.indexOf('</p>', pClose);
+            if (pClose >= 0 && pEnd > pClose) {
+                desc = dec(item.slice(pClose + 1, pEnd)).trim().replace(/\s+/g, ' ');
+            }
+        }
+
+        lista.push({ start, duration, title, desc });
     }
 
-    const ordenados = [...vistos.entries()].sort((a, b) => a[0] - b[0]);
-    return ordenados.map(([inicio, titulo], posicao) => {
-        const fim = posicao + 1 < ordenados.length ? ordenados[posicao + 1][0] : inicio + 3_600_000;
+    lista.sort((a, b) => a.start - b.start);
+
+    const unicos: typeof lista = [];
+    for (const item of lista) {
+        const last = unicos[unicos.length - 1];
+        if (last && last.start === item.start) continue;
+        unicos.push(item);
+    }
+
+    return unicos.map((item, index) => {
+        const next = unicos[index + 1];
+        let stop = item.start + item.duration;
+        if (next && (stop > next.start || Math.abs(stop - next.start) <= 60_000)) {
+            stop = next.start;
+        }
         return {
-            id: `${channelId}-${inicio}`,
-            title: titulo,
-            description: '',
+            id: `${channelId}-${item.start}`,
+            title: item.title,
+            description: item.desc,
             category: '',
-            startTime: new Date(inicio),
-            endTime: new Date(fim),
+            startTime: new Date(item.start),
+            endTime: new Date(stop > item.start ? stop : item.start + 3_600_000),
         };
     });
 }
 
-/** Busca o guiadetv só para quem ficou sem programação nenhuma do feed. */
+/** Busca o guiadetv para os canais suportados que ficaram sem programação do feed. */
 async function fillGuiaDeTvGaps(): Promise<void> {
     const alvos = [...appChannelNames.entries()].filter(([appId, name]) => {
         if (getChannelEPG(appId).length > 0) return false;
-        return norm(name) in GUIADETV_SLUGS;
+        return Boolean(slugDe(name));
     });
     if (!alvos.length) return;
 
     let algumPreenchido = false;
     await Promise.all(alvos.map(async ([appId, name]) => {
-        const slug = GUIADETV_SLUGS[norm(name)];
+        const slug = slugDe(name);
+        if (!slug) return;
         const synthId = `gdt:${slug}`;
         try {
             const res = await fetch(`https://www.guiadetv.com/canal/${slug}`);
