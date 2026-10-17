@@ -20,6 +20,7 @@ import { useRemoteMediaClient } from 'react-native-google-cast';
 import { Colors, Spacing, BorderRadius } from '../../constants/Colors';
 import { useShallow } from 'zustand/react/shallow';
 import { useMediaStore } from '../../stores/mediaStore';
+import { useSettingsStore, type UpscalingMode } from '../../stores/settingsStore';
 import CastAction from '../../components/CastAction';
 import { useDownloadStore } from '../../stores/downloadStore';
 import { resolveDownloadId } from '../../services/downloadRouting';
@@ -607,6 +608,23 @@ export default function MediaPlayerScreen() {
     const [isSeeking, setIsSeeking] = useState(false);
     const seekPreviewPctRef = useRef(0);
 
+    const upscaling = useSettingsStore((s) => s.upscaling);
+    const setUpscaling = useSettingsStore((s) => s.setUpscaling);
+    const prevUpscalingRef = useRef(upscaling);
+
+    useEffect(() => {
+        try {
+            const { NativeModules } = require('react-native');
+            NativeModules.SaimoUpscaling?.setMode?.(upscaling);
+        } catch {
+            // ignora
+        }
+        if (prevUpscalingRef.current !== upscaling) {
+            prevUpscalingRef.current = upscaling;
+            setVideoKey((v) => v + 1);
+        }
+    }, [upscaling]);
+
     // ── New feature state ─────────────────────────────────────────────────
     const [resizeMode, setResizeMode] = useState<ResizeMode>('contain');
     const [showSleep, setShowSleep] = useState(false);
@@ -956,7 +974,10 @@ export default function MediaPlayerScreen() {
         if (d && isFinite(d) && d > 0) setDuration(d);
         const natural = data?.naturalSize;
         const label = detailedResLabel(natural?.width, natural?.height);
-        if (label) setResolution(label);
+        if (label) {
+            const suffix = upscaling === 'hd' ? ' · Upscale FHD' : upscaling === '4k' ? ' · Upscale 4K' : '';
+            setResolution(`${label}${suffix}`);
+        }
 
         // Capture tracks
         if (data.audioTracks) {
@@ -984,7 +1005,7 @@ export default function MediaPlayerScreen() {
                 videoRef.current?.seek(saved.progress);
             }
         }
-    }, [params.id, params.seriesId, playbackSources, comVersao, isOffline, getProgress]);
+    }, [params.id, params.seriesId, playbackSources, comVersao, isOffline, getProgress, upscaling]);
 
     const onProgress = useCallback((data: any) => {
         if (!isMountedRef.current) return;
@@ -1019,8 +1040,11 @@ export default function MediaPlayerScreen() {
 
     const onBandwidthUpdate = useCallback((data: any) => {
         const label = detailedResLabel(data?.width, data?.height);
-        if (label) setResolution(label);
-    }, []);
+        if (label) {
+            const suffix = upscaling === 'hd' ? ' · Upscale FHD' : upscaling === '4k' ? ' · Upscale 4K' : '';
+            setResolution(`${label}${suffix}`);
+        }
+    }, [upscaling]);
 
     const onError = useCallback((err: any) => {
         if (!isMountedRef.current) return;
@@ -1119,8 +1143,13 @@ export default function MediaPlayerScreen() {
     }, [legendaExt, legendasExt, legendaAtraso, aplicarLegenda]);
 
     const handleVideoSelect = useCallback((id: number | string) => {
+        if (typeof id === 'string' && id.startsWith('upscale:')) {
+            const mode = id.replace('upscale:', '') as UpscalingMode;
+            setUpscaling(mode);
+            return;
+        }
         setSelectedVideo(Number(id) < 0 ? null : id as number);
-    }, []);
+    }, [setUpscaling]);
 
     // ─────────────────────────────────────────────────────────────────────
     // Playback controls
@@ -1649,12 +1678,10 @@ export default function MediaPlayerScreen() {
                                         <Text style={styles.toolLabel}>Fonte {selectedSource + 1}</Text>
                                     </TouchableOpacity>
                                 )}
-                                {videoTracks.length > 0 && (
-                                    <TouchableOpacity style={styles.toolBtn} onPress={() => setShowVideoSheet(true)}>
-                                        <MaterialIcons name="high-quality" size={19} color="#fff" />
-                                        <Text style={styles.toolLabel}>Qualidade</Text>
-                                    </TouchableOpacity>
-                                )}
+                                <TouchableOpacity style={styles.toolBtn} onPress={() => setShowVideoSheet(true)}>
+                                    <MaterialIcons name="high-quality" size={19} color={upscaling !== 'off' ? Colors.primary : '#fff'} />
+                                    <Text style={[styles.toolLabel, upscaling !== 'off' && { color: Colors.primary }]}>Qualidade</Text>
+                                </TouchableOpacity>
                                 {audioTracks.length > 0 && (
                                     <TouchableOpacity style={styles.toolBtn} onPress={() => setShowAudioSheet(true)}>
                                         <MaterialIcons name="audiotrack" size={19} color="#fff" />
@@ -1747,9 +1774,17 @@ export default function MediaPlayerScreen() {
 
             <TrackSheet
                 visible={showVideoSheet}
-                title="Qualidade da Imagem"
-                tracks={[{ id: -1, label: 'Automática' }, ...videoTracks]}
-                selectedId={selectedVideo ?? -1}
+                title="Qualidade e Super Resolução"
+                tracks={[
+                    ...(videoTracks.length > 0 ? [
+                        { id: -1, label: 'Qualidade: Automática' },
+                        ...videoTracks.map((t) => ({ id: t.id, label: `Qualidade: ${t.label}` })),
+                    ] : []),
+                    { id: 'upscale:off', label: 'Super Resolução: Desligado' },
+                    { id: 'upscale:hd', label: 'Super Resolução: Nitidez HD (720p → FHD)' },
+                    { id: 'upscale:4k', label: 'Super Resolução: Ultra (FHD → 4K)' },
+                ]}
+                selectedId={selectedVideo !== null ? selectedVideo : `upscale:${upscaling}`}
                 onSelect={handleVideoSelect}
                 onClose={() => setShowVideoSheet(false)}
             />
