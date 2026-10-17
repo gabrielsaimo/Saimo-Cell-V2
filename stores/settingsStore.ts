@@ -1,10 +1,21 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { NativeModules, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEFAULT_PIN = '1234';
 
 export type UpscalingMode = 'off' | 'hd' | '4k';
+
+function syncNativeUpscaling(mode: UpscalingMode) {
+    if (Platform.OS === 'android') {
+        try {
+            NativeModules.SaimoUpscaling?.setMode?.(mode);
+        } catch {
+            // Ignora se o módulo nativo não estiver disponível
+        }
+    }
+}
 
 export interface SettingsStore {
     // PIN e controle adulto
@@ -75,6 +86,7 @@ export const useSettingsStore = create<SettingsStore>()(
             },
 
             setUpscaling: (value: UpscalingMode) => {
+                syncNativeUpscaling(value);
                 set({ upscaling: value });
             },
 
@@ -87,6 +99,7 @@ export const useSettingsStore = create<SettingsStore>()(
             },
 
             resetSettings: () => {
+                syncNativeUpscaling('off');
                 set(initialState);
             },
         }),
@@ -102,6 +115,11 @@ export const useSettingsStore = create<SettingsStore>()(
                 showChannelNumber: state.showChannelNumber,
                 showEPG: state.showEPG,
             }),
+            onRehydrateStorage: () => (state) => {
+                if (state?.upscaling) {
+                    syncNativeUpscaling(state.upscaling);
+                }
+            },
         }
     )
 );

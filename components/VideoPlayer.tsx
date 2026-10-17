@@ -514,6 +514,20 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
   }, [isLoading, isRetrying, carregando, hasError, videoResolution]);
 
   const upscaling = useSettingsStore((s) => s.upscaling);
+  const prevUpscalingRef = useRef(upscaling);
+
+  useEffect(() => {
+    try {
+      const { NativeModules } = require('react-native');
+      NativeModules.SaimoUpscaling?.setMode?.(upscaling);
+    } catch {
+      // ignora
+    }
+    if (prevUpscalingRef.current !== upscaling) {
+      prevUpscalingRef.current = upscaling;
+      setVideoKey((v) => v + 1);
+    }
+  }, [upscaling]);
 
   const onBandwidthUpdate = useCallback((data: any) => {
     if (!isMountedRef.current) return;
@@ -590,11 +604,7 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               : { type: SelectedTrackType.SYSTEM }}
             selectedVideoTrack={selectedVideoTrackId !== null
               ? { type: SelectedVideoTrackType.INDEX, value: selectedVideoTrackId }
-              : upscaling === '4k'
-                ? { type: SelectedVideoTrackType.RESOLUTION, value: 2160 }
-                : upscaling === 'hd'
-                  ? { type: SelectedVideoTrackType.RESOLUTION, value: 1080 }
-                  : { type: SelectedVideoTrackType.AUTO }}
+              : { type: SelectedVideoTrackType.AUTO }}
             selectedTextTrack={selectedTextIdx !== null
               ? { type: SelectedTrackType.INDEX, value: selectedTextIdx }
               : { type: SelectedTrackType.DISABLED }}
