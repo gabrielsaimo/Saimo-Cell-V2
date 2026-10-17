@@ -4,6 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEFAULT_PIN = '1234';
 
+export type UpscalingMode = 'off' | 'hd' | '4k';
+
 export interface SettingsStore {
     // PIN e controle adulto
     adultPin: string;
@@ -12,6 +14,7 @@ export interface SettingsStore {
     // Player
     autoplay: boolean;
     volume: number;
+    upscaling: UpscalingMode;
 
     // UI
     showChannelNumber: boolean;
@@ -24,6 +27,7 @@ export interface SettingsStore {
     lockAdult: () => void;
     setAutoplay: (value: boolean) => void;
     setVolume: (value: number) => void;
+    setUpscaling: (value: UpscalingMode) => void;
     setShowChannelNumber: (value: boolean) => void;
     setShowEPG: (value: boolean) => void;
     resetSettings: () => void;
@@ -34,6 +38,7 @@ const initialState = {
     adultUnlocked: false,
     autoplay: true,
     volume: 1,
+    upscaling: 'off' as UpscalingMode,
     showChannelNumber: true,
     showEPG: true,
 };
@@ -69,6 +74,10 @@ export const useSettingsStore = create<SettingsStore>()(
                 set({ volume: Math.max(0, Math.min(1, value)) });
             },
 
+            setUpscaling: (value: UpscalingMode) => {
+                set({ upscaling: value });
+            },
+
             setShowChannelNumber: (value: boolean) => {
                 set({ showChannelNumber: value });
             },
@@ -89,6 +98,7 @@ export const useSettingsStore = create<SettingsStore>()(
                 adultUnlocked: state.adultUnlocked,
                 autoplay: state.autoplay,
                 volume: state.volume,
+                upscaling: state.upscaling,
                 showChannelNumber: state.showChannelNumber,
                 showEPG: state.showEPG,
             }),

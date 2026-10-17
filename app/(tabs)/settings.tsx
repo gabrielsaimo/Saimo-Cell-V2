@@ -33,10 +33,23 @@ export default function SettingsScreen() {
     setShowChannelNumber,
     autoplay,
     setAutoplay,
+    upscaling,
+    setUpscaling,
     adultUnlocked,
     lockAdult,
     unlockAdult,
   } = useSettingsStore();
+
+  const upscalingLabel = upscaling === 'hd'
+    ? 'Nitidez HD (720p → Full HD)'
+    : upscaling === '4k'
+      ? 'Super Resolução Ultra (Full HD → 4K)'
+      : 'Desligado';
+
+  const handleCycleUpscaling = useCallback(() => {
+    const next = upscaling === 'off' ? 'hd' : upscaling === 'hd' ? '4k' : 'off';
+    setUpscaling(next);
+  }, [upscaling, setUpscaling]);
   
   const { clearFavorites } = useFavoritesStore();
 
@@ -193,6 +206,21 @@ export default function SettingsScreen() {
               thumbColor={Colors.text}
             />
           </View>
+
+          <View style={styles.divider} />
+
+          <TouchableOpacity style={styles.settingRow} onPress={handleCycleUpscaling}>
+            <View style={styles.settingInfo}>
+              <Ionicons name="sparkles-outline" size={22} color={Colors.primary} />
+              <View>
+                <Text style={styles.settingLabel}>Super Resolução (Upscaling)</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  {upscalingLabel}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={Colors.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         {/* Dados */}

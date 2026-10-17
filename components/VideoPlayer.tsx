@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Channel, CurrentProgram } from '../types';
 import { Colors, BorderRadius, Spacing, Typography } from '../constants/Colors';
 import { useFavoritesStore } from '../stores/favoritesStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { getCurrentProgram, fetchChannelEPG, onEPGUpdate } from '../services/epgService';
 import EPGGuideModal from './EPGGuideModal';
 import CastAction from './CastAction';
@@ -512,11 +513,16 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
     });
   }, [isLoading, isRetrying, carregando, hasError, videoResolution]);
 
+  const upscaling = useSettingsStore((s) => s.upscaling);
+
   const onBandwidthUpdate = useCallback((data: any) => {
     if (!isMountedRef.current) return;
     const label = detailedResLabel(data?.width, data?.height);
-    if (label) setVideoResolution(label);
-  }, []);
+    if (label) {
+      const suffix = upscaling === 'hd' ? ' · Upscale FHD' : upscaling === '4k' ? ' · Upscale 4K' : '';
+      setVideoResolution(`${label}${suffix}`);
+    }
+  }, [upscaling]);
 
   // ─── DRM config ───
   useEffect(() => {
@@ -584,7 +590,11 @@ export default function VideoPlayer({ channel }: VideoPlayerProps) {
               : { type: SelectedTrackType.SYSTEM }}
             selectedVideoTrack={selectedVideoTrackId !== null
               ? { type: SelectedVideoTrackType.INDEX, value: selectedVideoTrackId }
-              : { type: SelectedVideoTrackType.AUTO }}
+              : upscaling === '4k'
+                ? { type: SelectedVideoTrackType.RESOLUTION, value: 2160 }
+                : upscaling === 'hd'
+                  ? { type: SelectedVideoTrackType.RESOLUTION, value: 1080 }
+                  : { type: SelectedVideoTrackType.AUTO }}
             selectedTextTrack={selectedTextIdx !== null
               ? { type: SelectedTrackType.INDEX, value: selectedTextIdx }
               : { type: SelectedTrackType.DISABLED }}
